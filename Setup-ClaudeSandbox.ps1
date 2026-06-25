@@ -213,48 +213,15 @@ if (-not (Test-Path $bootstrapDir)) { New-Item -ItemType Directory -Path $bootst
 icacls $bootstrapDir /grant "${UserName}:(OI)(CI)RX" | Out-Null
 
 $bootstrap = @'
-# Launches a VS Developer PowerShell, cds to the chosen repo. Run AS ClaudeSandbox.
-# Uses -VsInstanceId (more reliable than -VsInstallPath discovery, which can hang
-# when run under a different user profile than VS was registered under).
+# VS Developer Shell + cd to repo. Run AS ClaudeSandbox.
+# Uses -VsInstanceId (more reliable than -VsInstallPath discovery under a
+# different user profile). Errors loudly if VS isn't found.
 param([string]$RepoPath = 'C:\dev\repo')
-
-$ErrorActionPreference = 'Stop'
-try {
-    $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
-    if (-not (Test-Path $vswhere)) { throw "vswhere not found at $vswhere" }
-
-    $vs = & $vswhere -latest -format json | ConvertFrom-Json
-    if (-not $vs) { throw "vswhere returned no VS instance" }
-    $vsPath     = $vs.installationPath
-    $instanceId = $vs.instanceId
-
-    $devShellDll = Join-Path $vsPath 'Common7\Tools\Microsoft.VisualStudio.DevShell.dll'
-    if (-not (Test-Path $devShellDll)) { throw "DevShell module not found at $devShellDll" }
-
-    Import-Module $devShellDll
-
-    # Prefer the instance-id parameter set; suppress verbose/progress that can
-    # stall a non-interactive-ish launched console.
-    $prevProgress = $ProgressPreference
-    $ProgressPreference = 'SilentlyContinue'
-    Enter-VsDevShell -VsInstanceId $instanceId -SkipAutomaticLocation -DevCmdArguments '-arch=x64' | Out-Null
-    $ProgressPreference = $prevProgress
-
-    Write-Host "VS Developer Shell ready (instance $instanceId)." -ForegroundColor Green
-}
-catch {
-    Write-Warning "Could not initialize VS Developer Shell: $($_.Exception.Message)"
-    Write-Warning "Continuing in a plain shell - 'cl'/'msbuild' may be unavailable until you fix this."
-}
-finally {
-    $ErrorActionPreference = 'Continue'
-    if (Test-Path $RepoPath) {
-        Set-Location $RepoPath
-    } else {
-        Write-Warning "Repo path '$RepoPath' not found - staying in current directory."
-    }
-    Write-Host "Ready in $((Get-Location).Path). Launch: claude" -ForegroundColor Cyan
-}
+$vs = & "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe" -latest -format json | ConvertFrom-Json
+Import-Module (Join-Path $vs.installationPath 'Common7\Tools\Microsoft.VisualStudio.DevShell.dll')
+Enter-VsDevShell -VsInstanceId $vs.instanceId -SkipAutomaticLocation -DevCmdArguments '-arch=x64'
+Set-Location $RepoPath
+Write-Host "Ready in $RepoPath. Launch: claude" -ForegroundColor Cyan
 '@
 Set-Content -Path (Join-Path $bootstrapDir 'Enter-ClaudeDevShell.ps1') -Value $bootstrap -Encoding UTF8
 Write-Host "  wrote $bootstrapDir\Enter-ClaudeDevShell.ps1" -ForegroundColor Green

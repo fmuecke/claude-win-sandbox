@@ -1,0 +1,47 @@
+{
+  "permissions": {
+    "defaultMode": "default",
+    "deny": [
+      "Read(**/.ssh/**)",
+      "Read(**/.aws/**)",
+      "Read(**/.azure/**)",
+      "Read(**/.git-credentials)",
+      "Read(**/_netrc)",
+      "Read(**/*.pat)",
+      "Read(**/*.kdbx)",
+      "Read(**/secrets/**)",
+      "Read(**/.env)",
+      "Read(**/.env.*)",
+      "Bash(cat *id_rsa*)",
+      "Bash(cat *.kdbx*)",
+      "Bash(Get-Content *id_rsa*)",
+      "Bash(Get-Content *.kdbx*)",
+      "Bash(reg query *Credential*)",
+      "Bash(cmdkey *)",
+      "WebFetch"
+    ],
+    "ask": [
+      "Bash(git push *)",
+      "Bash(git remote *)"
+    ],
+    "allow": [
+      "Bash(git status *)",
+      "Bash(git diff *)",
+      "Bash(git add *)",
+      "Bash(git commit *)",
+      "Bash(git log *)",
+      "Bash(git fetch *)",
+      "Bash(git pull *)",
+      "Bash(git checkout *)",
+      "Bash(git branch *)",
+      "Bash(msbuild *)",
+      "Bash(cl *)",
+      "Bash(cmake *)",
+      "Bash(ctest *)",
+      "Bash(dir *)",
+      "Read(C:/dev/repo/**)",
+      "Edit(C:/dev/repo/**)"
+    ]
+  },
+  "disableBypassPermissionsMode": "disable"
+}

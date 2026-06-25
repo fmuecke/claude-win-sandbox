@@ -15,7 +15,6 @@ shops. This project is for that case.
 > attacker who already has your privileges. For hard isolation, use a VM. See
 > [Limitations](#limitations).
 
----
 
 ## What it does
 
@@ -30,11 +29,10 @@ shops. This project is for that case.
      denied your profile by default — the script warns if yours is misconfigured)
    - Locates VS Developer Shell + git, writes a Dev Shell bootstrap
 
-2. **`Deploy-ClaudeManagedSettings.ps1`** (run once, elevated)
-   - Deploys an enterprise `managed-settings.json` for Claude Code
-   - Denies obvious secret reads, disables bypass-permissions mode, pre-approves
-     routine git + build verbs
-   - ACL-locks the policy file to admin-only write
+2. **`managed-settings.json`** (copy once, elevated)
+   - Enterprise Claude Code policy: denies obvious secret reads, disables
+     bypass-permissions mode, pre-approves routine git + build verbs
+   - Copy to `C:\ProgramData\ClaudeCode\` and lock it (see setup below)
 
 3. **`Start-ClaudeSandbox.ps1`** (run per session, normal priv)
    - Prompts for the `ClaudeSandbox` password (via `runas`)
@@ -49,7 +47,6 @@ shops. This project is for that case.
    - Prints PASS/WARN/FAIL; exits non-zero on any FAIL. Run elevated for full
      coverage (user-rights + HKLM checks). Doubles as a post-launch diagnostic.
 
----
 
 ## Why a separate user (and not just sandbox flags)
 
@@ -70,7 +67,6 @@ managed-settings deny rules. Defense in depth:
 | Permission prompts (no bypass mode) | Unreviewed command execution | Claude Code |
 | Network separation (your env) | Exfiltration | Your network |
 
----
 
 ## Prerequisites
 
@@ -80,7 +76,6 @@ managed-settings deny rules. Defense in depth:
 - Claude Code installed (per-user under `ClaudeSandbox`, or machine-wide)
 - Admin rights for the two setup scripts
 
----
 
 ## Setup
 
@@ -88,8 +83,11 @@ managed-settings deny rules. Defense in depth:
 # 1. Provision the user, ACLs, bootstrap  (ELEVATED)
 .\Setup-ClaudeSandbox.ps1
 
-# 2. Deploy the Claude Code policy  (ELEVATED)
-.\Deploy-ClaudeManagedSettings.ps1
+# 2. Install the Claude Code policy  (ELEVATED)
+New-Item -ItemType Directory -Path C:\ProgramData\ClaudeCode -Force | Out-Null
+Copy-Item .\managed-settings.json C:\ProgramData\ClaudeCode\ -Force
+$f = 'C:\ProgramData\ClaudeCode\managed-settings.json'
+icacls $f /inheritance:r /grant 'Administrators:F' 'SYSTEM:F' 'Users:R'   # admin-write only
 
 # 2b. Verify everything took  (ELEVATED for full coverage)
 .\Check-ClaudeSandbox.ps1
@@ -106,7 +104,6 @@ Then, day to day (normal PowerShell, no elevation):
 # enter ClaudeSandbox password (runas) -> new window opens -> type: claude
 ```
 
----
 
 ## Credential handling
 
@@ -119,7 +116,6 @@ accept keyboard input (a "hung" shell).
 No password caching: the prompt is the only credential path, which keeps the tool
 simple and avoids storing the password anywhere.
 
----
 
 ## Windows Terminal profile (optional)
 
@@ -133,8 +129,6 @@ Add a profile so it's one click from the dropdown:
   "startingDirectory": "C:\\dev\\repo"
 }
 ```
-
----
 
 ## Limitations
 
@@ -154,8 +148,6 @@ Add a profile so it's one click from the dropdown:
   to get there. Keep agent autonomy and elevation in separate processes — run
   elevated VS for debugging (agent mode off), agentic AI here (low-priv).
 
----
-
 ## Why not Docker / WSL?
 
 Both are great and already well-served by other projects — use them if your
@@ -163,11 +155,9 @@ workload runs there. This project exists specifically for **native Windows
 toolchains** (MSVC, classic .vcxproj, on-prem build) that can't move into a
 Linux container without losing the toolchain.
 
----
-
 ## License
 
-[LICENSE](MIT)
+[MIT](LICENSE)
 
 ## Status
 

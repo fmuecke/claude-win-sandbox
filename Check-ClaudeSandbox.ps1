@@ -28,8 +28,8 @@
 
 [CmdletBinding()]
 param(
-    [string]$UserName        = 'ClaudeSandbox',
-    [string]$RepoPath        = 'C:\dev\repo',
+    [string]$UserName = 'ClaudeSandbox',
+    [string]$RepoPath = 'C:\dev\repo',
     [string]$BootstrapScript = 'C:\dev\claude-tools\Enter-ClaudeDevShell.ps1',
     [string]$ManagedSettings = 'C:\ProgramData\ClaudeCode\managed-settings.json'
 )
@@ -39,11 +39,11 @@ $script:warns = 0
 
 function Pass { param($m) Write-Host "  [PASS] $m" -ForegroundColor Green }
 function Warn { param($m) Write-Host "  [WARN] $m" -ForegroundColor Yellow; $script:warns++ }
-function Fail { param($m) Write-Host "  [FAIL] $m" -ForegroundColor Red;    $script:fails++ }
+function Fail { param($m) Write-Host "  [FAIL] $m" -ForegroundColor Red; $script:fails++ }
 function Section { param($m) Write-Host "`n== $m ==" -ForegroundColor Cyan }
 
 $isAdmin = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()
-           ).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
+).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
 if (-not $isAdmin) {
     Write-Host "Note: not elevated - some checks (user-rights, HKLM) may be limited." -ForegroundColor DarkYellow
 }
@@ -91,7 +91,7 @@ if ($isAdmin) {
         Remove-Item $tmp -ErrorAction SilentlyContinue
 
         # secedit may record the account as *SID or by bare name - match either.
-        $sidForm  = [regex]::Escape("*$sid")
+        $sidForm = [regex]::Escape("*$sid")
         $nameForm = "(^|[=,\s])$([regex]::Escape($UserName))([,\s]|$)"
         function Test-RightIncludesAccount {
             param([string]$Line, [string]$SidPattern, [string]$NamePattern)
@@ -100,11 +100,12 @@ if ($isAdmin) {
             return ($val -match $SidPattern) -or ($val -match $NamePattern)
         }
 
-        foreach ($right in 'SeDenyNetworkLogonRight','SeDenyRemoteInteractiveLogonRight') {
+        foreach ($right in 'SeDenyNetworkLogonRight', 'SeDenyRemoteInteractiveLogonRight') {
             $line = $pol | Where-Object { $_ -match "^$right\s*=" }
             if (Test-RightIncludesAccount -Line $line -SidPattern $sidForm -NamePattern $nameForm) {
                 Pass "$right includes the account."
-            } else {
+            }
+            else {
                 Warn "$right does NOT include the account (run setup to apply)."
             }
         }
@@ -112,13 +113,16 @@ if ($isAdmin) {
         $denyInteractive = $pol | Where-Object { $_ -match '^SeDenyInteractiveLogonRight\s*=' }
         if (Test-RightIncludesAccount -Line $denyInteractive -SidPattern $sidForm -NamePattern $nameForm) {
             Fail "Interactive logon is DENIED for the account - the launcher will not work."
-        } else {
+        }
+        else {
             Pass "Interactive logon is allowed (required by the launcher)."
         }
-    } catch {
+    }
+    catch {
         Warn "Could not read user-rights policy: $($_.Exception.Message)"
     }
-} else {
+}
+else {
     Warn "Skipped logon-rights checks (need elevation)."
 }
 
@@ -132,12 +136,14 @@ else { Warn "Not hidden from the login screen (cosmetic)." }
 Section "Repo permissions ($RepoPath)"
 if (-not (Test-Path $RepoPath)) {
     Warn "Repo path does not exist yet."
-} else {
+}
+else {
     $acl = Get-Acl $RepoPath
     $userAce = $acl.Access | Where-Object { $_.IdentityReference -match "\\$UserName$" }
     if ($userAce | Where-Object { $_.FileSystemRights -match 'Modify|FullControl|Write' }) {
         Pass "'$UserName' has write access to the repo (and sub-repos, via inheritance)."
-    } else {
+    }
+    else {
         Fail "'$UserName' lacks write access to the repo - Claude can't edit code."
     }
 }
@@ -153,7 +159,8 @@ $risky = $acl.Access | Where-Object {
 }
 if ($risky) {
     Fail "Your profile grants broad read access: $(($risky.IdentityReference | Sort-Object -Unique) -join ', '). Fix the profile ACL."
-} else {
+}
+else {
     Pass "Profile not readable by Users/Everyone - '$UserName' is denied by default."
 }
 
@@ -167,8 +174,10 @@ if (Test-Path $vswhere) {
     $vsPath = & $vswhere -latest -property installationPath 2>$null
     if ($vsPath -and (Test-Path (Join-Path $vsPath 'Common7\Tools\Microsoft.VisualStudio.DevShell.dll'))) {
         Pass "VS Developer Shell found: $vsPath"
-    } else { Warn "VS found but DevShell module missing." }
-} else { Warn "vswhere not found - is Visual Studio installed machine-wide?" }
+    }
+    else { Warn "VS found but DevShell module missing." }
+}
+else { Warn "vswhere not found - is Visual Studio installed machine-wide?" }
 
 if (Get-Command git.exe -ErrorAction SilentlyContinue) { Pass "git on machine PATH." }
 else { Warn "git not on machine PATH." }
@@ -176,19 +185,22 @@ else { Warn "git not on machine PATH." }
 # --- 6. Claude Code managed policy -------------------------------------------
 Section "Claude Code managed policy"
 if (-not (Test-Path $ManagedSettings)) {
-    Warn "Managed settings not found: $ManagedSettings - run Deploy-ClaudeManagedSettings.ps1."
-} else {
+    Warn "Managed settings not found: $ManagedSettings - copy managed-settings.json there (see README)."
+}
+else {
     Pass "Policy file present."
     try {
         $json = Get-Content $ManagedSettings -Raw | ConvertFrom-Json
         if ($json.disableBypassPermissionsMode -eq 'disable') {
             Pass "Bypass-permissions mode is disabled."
-        } else {
+        }
+        else {
             Warn "Bypass-permissions mode is NOT disabled in policy."
         }
         if ($json.permissions.deny) { Pass "Deny rules present ($($json.permissions.deny.Count) entries)." }
         else { Warn "No deny rules in policy." }
-    } catch {
+    }
+    catch {
         Fail "Policy file is not valid JSON: $($_.Exception.Message)"
     }
     # Policy file should be admin-write-only.
@@ -206,7 +218,8 @@ if (-not (Test-Path $ManagedSettings)) {
 Section "Summary"
 if ($script:fails -eq 0 -and $script:warns -eq 0) {
     Write-Host "  All checks passed." -ForegroundColor Green
-} else {
-    Write-Host "  $script:fails FAIL, $script:warns WARN." -ForegroundColor $(if ($script:fails){'Red'}else{'Yellow'})
+}
+else {
+    Write-Host "  $script:fails FAIL, $script:warns WARN." -ForegroundColor $(if ($script:fails) { 'Red' }else { 'Yellow' })
 }
 exit ([int]($script:fails -gt 0))
