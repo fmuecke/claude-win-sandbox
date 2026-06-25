@@ -136,7 +136,7 @@ if (-not (Test-Path $RepoPath)) {
     $acl = Get-Acl $RepoPath
     $userAce = $acl.Access | Where-Object { $_.IdentityReference -match "\\$UserName$" }
     if ($userAce | Where-Object { $_.FileSystemRights -match 'Modify|FullControl|Write' }) {
-        Pass "'$UserName' has write access to the repo."
+        Pass "'$UserName' has write access to the repo (and sub-repos, via inheritance)."
     } else {
         Fail "'$UserName' lacks write access to the repo - Claude can't edit code."
     }

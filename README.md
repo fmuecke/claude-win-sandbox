@@ -24,7 +24,8 @@ shops. This project is for that case.
    - Hardens it: denies network + RDP logon, password never-expires /
      user-cannot-change, hidden from the login screen. **Interactive logon is
      left enabled on purpose** — the launcher uses it; denying it breaks launch.
-   - Grants it Modify on `C:\dev\repo` (shared with you)
+   - Grants it Modify on `C:\dev\repo` (shared with you; sub-repos beneath it
+     are covered via inheritance)
    - Verifies your profile isn't readable by Users/Everyone (a Standard user is
      denied your profile by default — the script warns if yours is misconfigured)
    - Locates VS Developer Shell + git, writes a Dev Shell bootstrap
@@ -36,8 +37,9 @@ shops. This project is for that case.
    - ACL-locks the policy file to admin-only write
 
 3. **`Start-ClaudeSandbox.ps1`** (run per session, normal priv)
-   - Prompts for the `ClaudeSandbox` password
-   - Launches a new console as `ClaudeSandbox`, in the Dev Shell, `cd`'d to the repo
+   - Prompts for the `ClaudeSandbox` password (via `runas`)
+   - Launches a new console as `ClaudeSandbox`, in the Dev Shell, `cd`'d to
+     `C:\dev\repo` (override with `-RepoPath`)
    - You type `claude` and go
 
 4. **`Check-ClaudeSandbox.ps1`** (run anytime, read-only)
@@ -99,39 +101,23 @@ managed-settings deny rules. Defense in depth:
 Then, day to day (normal PowerShell, no elevation):
 
 ```powershell
-.\Start-ClaudeSandbox.ps1
-# enter ClaudeSandbox password -> new window opens -> type: claude
+.\Start-ClaudeSandbox.ps1                       # uses C:\dev\repo
+.\Start-ClaudeSandbox.ps1 -RepoPath C:\dev\other   # or override
+# enter ClaudeSandbox password (runas) -> new window opens -> type: claude
 ```
 
 ---
 
 ## Credential handling
 
-By default the launcher **prompts for the password each time** — most secure,
-mild friction.
+The launcher uses **`runas`**, which prompts for the password each launch and
+opens an interactive console as `ClaudeSandbox`. `runas` is used rather than
+`Start-Process -Credential` because it attaches the new process to an interactive
+desktop — `Start-Process -Credential` can produce a window that renders but won't
+accept keyboard input (a "hung" shell).
 
-### Frictionless launches (opt-in)
-
-`runas.exe` cannot accept a password from script (by design), and `cmdkey`
-won't return a stored password to a script. So a truly cached launch requires
-**DPAPI**: encrypt the password to *your* user profile, decrypt at launch.
-
-```powershell
-# Store once (encrypted to YOUR profile via DPAPI):
-Read-Host "ClaudeSandbox password" -AsSecureString |
-  ConvertFrom-SecureString |
-  Set-Content "$env:LOCALAPPDATA\claude-sandbox\cred.txt"
-
-# The launcher reads + decrypts it automatically if present.
-```
-
-> **Trade-off:** anything running as your account can decrypt it. `ClaudeSandbox`
-> is low-priv, so the practical risk is low, but it does soften the boundary.
-> Don't do this on a shared or less-trusted machine. Delete with:
-> `Remove-Item "$env:LOCALAPPDATA\claude-sandbox\cred.txt"`
-
-*(The DPAPI read path is left as a documented opt-in rather than wired in by
-default, to keep the secure path the path of least resistance.)*
+No password caching: the prompt is the only credential path, which keeps the tool
+simple and avoids storing the password anywhere.
 
 ---
 
@@ -186,3 +172,4 @@ Linux container without losing the toolchain.
 ## Status
 
 Personal project. Opinionated, minimal, not affiliated with Anthropic.
+```
