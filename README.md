@@ -27,7 +27,9 @@ shops. This project is for that case.
      are covered via inheritance)
    - Verifies your profile isn't readable by Users/Everyone (a Standard user is
      denied your profile by default — the script warns if yours is misconfigured)
-   - Locates VS Developer Shell + git, writes a Dev Shell bootstrap
+   - Locates VS Developer Shell + git, generates the Dev Shell bootstrap into
+     `C:\ProgramData\claude-win-sandbox\bootstrap\` and locks it admin-write /
+     Users-RX (the sandbox user can run it but not modify it)
 
 2. **`managed-settings.json`** (copy once, elevated)
    - Enterprise Claude Code policy: denies obvious secret reads, disables
@@ -42,10 +44,12 @@ shops. This project is for that case.
 
 4. **`Check-ClaudeSandbox.ps1`** (run anytime, read-only)
    - Verifies the whole setup: user exists & is non-admin, hardening applied,
-     repo ACLs, your profile isn't exposed, bootstrap + toolchain present, policy
-     file valid and admin-locked
+     repo ACLs, your profile isn't exposed, bootstrap present + locked, toolchain
+     present, Claude installed per-user (and *not* leaking in from elsewhere),
+     policy file valid and admin-locked
    - Prints PASS/WARN/FAIL; exits non-zero on any FAIL. Run elevated for full
-     coverage (user-rights + HKLM checks). Doubles as a post-launch diagnostic.
+     coverage (user-rights + HKLM + other-profile checks). Doubles as a
+     post-launch diagnostic.
 
 
 ## Why a separate user (and not just sandbox flags)
@@ -73,8 +77,31 @@ managed-settings deny rules. Defense in depth:
 - Windows 10/11, dedicated/trusted dev machine
 - Visual Studio (Pro or higher) installed machine-wide
 - Git for Windows installed machine-wide
-- Claude Code installed (per-user under `ClaudeSandbox`, or machine-wide)
+- **Claude Code installed *as the `ClaudeSandbox` user* (per-user, not
+  machine-wide).** See [Installing Claude Code](#installing-claude-code).
 - Admin rights for the two setup scripts
+
+
+## Installing Claude Code
+
+Claude Code **must be installed inside the `ClaudeSandbox` profile**, not
+machine-wide and not in your own profile. The binary and its `~/.claude` config
+live with the sandbox user so they stay inside the boundary; a machine-wide or
+your-profile install can be picked up off the machine PATH, pulling binary/config
+from **outside** the sandbox — exactly what the boundary is meant to prevent.
+
+After running setup, start a sandboxed shell and install as `ClaudeSandbox`:
+
+```powershell
+.\Start-ClaudeSandbox.ps1
+# in the new window (running as ClaudeSandbox):
+irm https://claude.ai/install.ps1 | iex
+```
+
+This installs to `C:\Users\ClaudeSandbox\.local\bin\claude.exe`. The bootstrap
+prepends that directory to PATH on every launch, so no manual PATH edit or
+restart is needed — just reopen the shell. `Check-ClaudeSandbox.ps1` verifies the
+per-user install is present and warns if a copy exists elsewhere.
 
 
 ## Setup
@@ -89,10 +116,14 @@ Copy-Item .\managed-settings.json C:\ProgramData\ClaudeCode\ -Force
 $f = 'C:\ProgramData\ClaudeCode\managed-settings.json'
 icacls $f /inheritance:r /grant 'Administrators:F' 'SYSTEM:F' 'Users:R'   # admin-write only
 
-# 2b. Verify everything took  (ELEVATED for full coverage)
+# 3. Install Claude Code AS ClaudeSandbox (see "Installing Claude Code" above)
+.\Start-ClaudeSandbox.ps1
+#   in the new window:  irm https://claude.ai/install.ps1 | iex
+
+# 4. Verify everything took  (ELEVATED for full coverage)
 .\Check-ClaudeSandbox.ps1
 
-# 3. First-time: log in as ClaudeSandbox once to set up its git/ADO credential
+# 5. First-time: log in as ClaudeSandbox once to set up its git/ADO credential
 #    (scoped, minimal PAT — kept separate from yours)
 ```
 
@@ -117,19 +148,6 @@ No password caching: the prompt is the only credential path, which keeps the too
 simple and avoids storing the password anywhere.
 
 
-## Windows Terminal profile (optional)
-
-Add a profile so it's one click from the dropdown:
-
-```json
-{
-  "name": "Claude (sandboxed)",
-  "commandline": "powershell.exe -NoExit -ExecutionPolicy Bypass -File C:\\dev\\claude-tools\\Start-ClaudeSandbox.ps1",
-  "icon": "ms-appx:///ProfileIcons/{0caa0dad-35be-5f56-a8ff-afceeeaa6101}.png",
-  "startingDirectory": "C:\\dev\\repo"
-}
-```
-
 ## Limitations
 
 - **The boundary is Windows' default profile ACL**, not explicit deny rules.
@@ -137,6 +155,10 @@ Add a profile so it's one click from the dropdown:
   setup script verifies this rather than patching over it with brittle deny ACEs.
   Secrets kept *outside* your profile (e.g. a vault under `C:\` or a share) aren't
   covered by that default — protect those paths' ACLs separately.
+- **Claude must be installed per-user under `ClaudeSandbox`.** A machine-wide or
+  your-profile install can be resolved off the machine PATH, which would pull the
+  binary and `~/.claude` config from outside the boundary. The check script warns
+  if it finds Claude installed anywhere other than the sandbox user.
 - **No native bubblewrap on Windows.** When Anthropic ships native Windows
   sandboxing, prefer it (or stack it on top of this).
 - **Managed-settings deny rules are defense-in-depth, not airtight.** Claude
@@ -162,4 +184,3 @@ Linux container without losing the toolchain.
 ## Status
 
 Personal project. Opinionated, minimal, not affiliated with Anthropic.
-```

@@ -12,11 +12,11 @@
     (Start-Process -Credential can produce a window that renders but won't accept
     typing - the "hung shell".) runas prompts for the password natively.
 
-.PARAMETER UserName
-    The low-privilege user to run as. Default: ClaudeSandbox.
-
 .PARAMETER RepoPath
     Project directory to drop into. Default: C:\dev\repo.
+
+.PARAMETER UserName
+    The low-privilege user to run as. Default: ClaudeSandbox.
 
 .PARAMETER BootstrapScript
     Dev Shell bootstrap written by Setup-ClaudeSandbox.ps1.
@@ -32,9 +32,9 @@
 
 [CmdletBinding()]
 param(
-    [string]$UserName        = 'ClaudeSandbox',
-    [string]$RepoPath        = 'C:\dev\repo',
-    [string]$BootstrapScript = 'C:\dev\claude-tools\Enter-ClaudeDevShell.ps1'
+    [string]$RepoPath = 'C:\dev\repo',
+    [string]$UserName = 'ClaudeSandbox',
+    [string]$BootstrapScript = 'C:\ProgramData\claude-win-sandbox\bootstrap\Enter-ClaudeDevShell.ps1'
 )
 
 $ErrorActionPreference = 'Stop'
@@ -63,6 +63,7 @@ runas /user:$UserName $inner
 if ($LASTEXITCODE -ne 0) {
     Write-Warning "runas returned exit code $LASTEXITCODE (wrong password, or the account lacks interactive logon)."
     Write-Host "Verify setup with: .\Check-ClaudeSandbox.ps1" -ForegroundColor Yellow
-} else {
+}
+else {
     Write-Host "Launched. In the new window, run: claude" -ForegroundColor Cyan
 }

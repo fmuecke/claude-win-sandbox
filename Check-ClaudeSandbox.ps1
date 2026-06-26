@@ -4,11 +4,11 @@
     toolchain, and the assumptions the boundary depends on. Read-only - makes no
     changes. Safe to run anytime, including as a post-launch diagnostic.
 
-.PARAMETER UserName
-    Low-privilege sandbox user. Default: ClaudeSandbox.
-
 .PARAMETER RepoPath
     Shared project directory. Default: C:\dev\repo.
+
+.PARAMETER UserName
+    Low-privilege sandbox user. Default: ClaudeSandbox.
 
 .PARAMETER BootstrapScript
     Dev Shell bootstrap written by Setup-ClaudeSandbox.ps1.
@@ -22,15 +22,16 @@
 
 .NOTES
     Exit code 0 if no FAILs, 1 if any FAIL. WARN does not fail the run.
-    Some checks need elevation to read fully (e.g. user-rights, HKLM); run
-    elevated for complete results - the script notes where it's degraded.
+    Some checks need elevation to read fully (e.g. user-rights, HKLM, other
+    users' profiles); run elevated for complete results - the script notes where
+    it's degraded.
 #>
 
 [CmdletBinding()]
 param(
-    [string]$UserName = 'ClaudeSandbox',
     [string]$RepoPath = 'C:\dev\repo',
-    [string]$BootstrapScript = 'C:\dev\claude-tools\Enter-ClaudeDevShell.ps1',
+    [string]$UserName = 'ClaudeSandbox',
+    [string]$BootstrapScript = 'C:\ProgramData\claude-win-sandbox\bootstrap\Enter-ClaudeDevShell.ps1',
     [string]$ManagedSettings = 'C:\ProgramData\ClaudeCode\managed-settings.json'
 )
 
@@ -45,7 +46,7 @@ function Section { param($m) Write-Host "`n== $m ==" -ForegroundColor Cyan }
 $isAdmin = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()
 ).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
 if (-not $isAdmin) {
-    Write-Host "Note: not elevated - some checks (user-rights, HKLM) may be limited." -ForegroundColor DarkYellow
+    Write-Host "Note: not elevated - some checks (user-rights, HKLM, other profiles) may be limited." -ForegroundColor DarkYellow
 }
 
 # --- 1. User exists and is not admin -----------------------------------------
@@ -166,8 +167,29 @@ else {
 
 # --- 5. Bootstrap + tooling ---------------------------------------------------
 Section "Dev Shell bootstrap & toolchain"
-if (Test-Path $BootstrapScript) { Pass "Bootstrap present: $BootstrapScript" }
-else { Fail "Bootstrap missing: $BootstrapScript - run setup." }
+if (Test-Path $BootstrapScript) {
+    Pass "Bootstrap present: $BootstrapScript"
+
+    # The bootstrap must be runnable by ClaudeSandbox but NOT writable by it -
+    # otherwise the agent could rewrite what runs at next launch. Verify the dir
+    # is admin-write / Users-RX (locked like managed-settings.json).
+    $bootstrapDir = Split-Path $BootstrapScript -Parent
+    $bacl = Get-Acl $bootstrapDir
+    $writableByUsers = $bacl.Access | Where-Object {
+        $_.AccessControlType -eq 'Allow' -and
+        $_.FileSystemRights -match 'Write|Modify|FullControl' -and
+        $_.IdentityReference -match '\\(Users|Everyone|Authenticated Users)$|^Everyone$'
+    }
+    if ($writableByUsers) {
+        Fail "Bootstrap dir is writable by non-admins - $UserName could alter what runs at launch."
+    }
+    else {
+        Pass "Bootstrap dir is admin-write-only (Users can run, not modify)."
+    }
+}
+else {
+    Fail "Bootstrap missing: $BootstrapScript - run setup."
+}
 
 $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
 if (Test-Path $vswhere) {
@@ -182,7 +204,56 @@ else { Warn "vswhere not found - is Visual Studio installed machine-wide?" }
 if (Get-Command git.exe -ErrorAction SilentlyContinue) { Pass "git on machine PATH." }
 else { Warn "git not on machine PATH." }
 
-# --- 6. Claude Code managed policy -------------------------------------------
+# --- 6. Claude Code install location -----------------------------------------
+# The boundary depends on ClaudeSandbox running ITS OWN per-user copy, not one
+# from your profile or a machine-wide install: either of those could be picked
+# up off the machine PATH, pulling binary/config from outside the sandbox.
+Section "Claude Code install"
+$expected = "C:\Users\$UserName\.local\bin\claude.exe"
+if (Test-Path $expected) { Pass "Claude Code installed for ${UserName}: $expected" }
+else { Warn "No per-user Claude for $UserName at $expected - install AS $UserName (irm https://claude.ai/install.ps1 | iex)." }
+
+# Flag installs OUTSIDE the sandbox user that could leak in via machine PATH.
+$leaks = @()
+
+# Other user profiles (needs elevation to traverse other users' dirs).
+if ($isAdmin) {
+    Get-ChildItem 'C:\Users' -Directory -ErrorAction SilentlyContinue |
+    Where-Object { $_.Name -ne $UserName } |
+    ForEach-Object {
+        $p = Join-Path $_.FullName '.local\bin\claude.exe'
+        if (Test-Path $p) { $leaks += $p }
+    }
+}
+else {
+    Warn "Skipped other-profile scan (need elevation) - may under-report leaks."
+}
+
+# Machine-wide / common locations.
+foreach ($m in @(
+        "$env:ProgramFiles\Claude\claude.exe",
+        "${env:ProgramFiles(x86)}\Claude\claude.exe",
+        "$env:ProgramData\Claude\claude.exe"
+    )) {
+    if (Test-Path $m) { $leaks += $m }
+}
+
+# Anything resolvable on the check process's PATH that isn't the sandbox copy.
+# (Resolves against you/admin, not ClaudeSandbox - catches machine/your-PATH leaks.)
+$onPath = (Get-Command claude.exe -All -ErrorAction SilentlyContinue).Source |
+Where-Object { $_ -and $_ -ne $expected }
+if ($onPath) { $leaks += $onPath }
+
+$leaks = $leaks | Sort-Object -Unique
+if ($leaks) {
+    Warn "Claude installed outside $UserName (could leak in via machine PATH):"
+    $leaks | ForEach-Object { Warn "    $_" }
+}
+else {
+    Pass "No Claude installs outside $UserName."
+}
+
+# --- 7. Claude Code managed policy -------------------------------------------
 Section "Claude Code managed policy"
 if (-not (Test-Path $ManagedSettings)) {
     Warn "Managed settings not found: $ManagedSettings - copy managed-settings.json there (see README)."

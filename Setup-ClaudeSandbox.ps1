@@ -13,12 +13,16 @@
     - VS + Git are assumed installed machine-wide (default). A Standard user can
       run them already; no extra grants needed for Program Files.
     - DENY ACEs override ALLOW. Review every Deny path before running.
+    - The Dev Shell bootstrap is generated into ProgramData (Users-traversable by
+      default) and locked admin-write/Users-RX, so ClaudeSandbox can run it but
+      not modify it.
 #>
 
 [CmdletBinding()]
 param(
-    [string]$UserName = 'ClaudeSandbox',
     [string]$RepoPath = 'C:\dev\repo',
+    [string]$UserName = 'ClaudeSandbox',
+    [string]$BootstrapScript = 'C:\ProgramData\claude-win-sandbox\bootstrap\Enter-ClaudeDevShell.ps1',
     [securestring]$Password # if omitted, you will be prompted
 )
 
@@ -205,26 +209,66 @@ else {
 # A standard user can execute both already. No grants needed because they live
 # in Program Files (readable+executable by Users by default).
 
-# --- 5. Emit a launch profile for the dev shell ------------------------------
-Write-Step "Writing a Developer-Shell bootstrap for $UserName"
+# --- 5. Generate the Dev Shell bootstrap into ProgramData --------------------
+# ProgramData is traversable by Users by default, so ClaudeSandbox can reach the
+# bootstrap regardless of where this repo was cloned (no profile-traversal trap).
+# We GENERATE it here and LOCK it admin-write / Users-RX, so the sandbox user can
+# run it but cannot rewrite what executes at next launch.
+Write-Step "Writing the Developer-Shell bootstrap to ProgramData"
 
-$bootstrapDir = "C:\dev\claude-tools"
+$bootstrapDir = Split-Path $BootstrapScript -Parent
 if (-not (Test-Path $bootstrapDir)) { New-Item -ItemType Directory -Path $bootstrapDir -Force | Out-Null }
-icacls $bootstrapDir /grant "${UserName}:(OI)(CI)RX" | Out-Null
 
-$bootstrap = @'
-# VS Developer Shell + cd to repo. Run AS ClaudeSandbox.
+# NOTE: expandable here-string (@"..."@) so $UserName is baked in at generation
+# time. Runtime $-vars that must survive to execution are escaped as `$.
+$bootstrap = @"
+# VS Developer Shell + cd to repo. Run AS $UserName (via the launcher's runas).
 # Uses -VsInstanceId (more reliable than -VsInstallPath discovery under a
 # different user profile). Errors loudly if VS isn't found.
-param([string]$RepoPath = 'C:\dev\repo')
-$vs = & "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe" -latest -format json | ConvertFrom-Json
-Import-Module (Join-Path $vs.installationPath 'Common7\Tools\Microsoft.VisualStudio.DevShell.dll')
-Enter-VsDevShell -VsInstanceId $vs.instanceId -SkipAutomaticLocation -DevCmdArguments '-arch=x64'
-Set-Location $RepoPath
-Write-Host "Ready in $RepoPath. Launch: claude" -ForegroundColor Cyan
-'@
-Set-Content -Path (Join-Path $bootstrapDir 'Enter-ClaudeDevShell.ps1') -Value $bootstrap -Encoding UTF8
-Write-Host "  wrote $bootstrapDir\Enter-ClaudeDevShell.ps1" -ForegroundColor Green
+param([string]`$RepoPath = 'C:\dev\repo')
+
+# Guard: this must run as the sandbox user, not whoever launched it. If the
+# bootstrap is invoked directly (no runas), refuse - running as the wrong user
+# silently defeats the boundary.
+`$me = (`$env:USERNAME)
+if (`$me -ne '$UserName') {
+    Write-Host "Refusing to run: expected user '$UserName' but running as '`$me'." -ForegroundColor Red
+    Write-Host "Launch via Start-ClaudeSandbox.ps1 (which uses runas), not directly." -ForegroundColor Yellow
+    exit 1
+}
+Write-Host "Running as `$me" -ForegroundColor Green
+
+`$vs = & "`${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe" -latest -format json | ConvertFrom-Json
+Import-Module (Join-Path `$vs.installationPath 'Common7\Tools\Microsoft.VisualStudio.DevShell.dll')
+Enter-VsDevShell -VsInstanceId `$vs.instanceId -SkipAutomaticLocation -DevCmdArguments '-arch=x64'
+Set-Location `$RepoPath
+
+# Ensure THIS user's per-user Claude install is on PATH. Self-contained: no
+# dependency on the persisted User PATH. Prepend so the sandbox user's own copy
+# wins over any machine-wide / other-profile install that may be on PATH - the
+# install must live inside this profile to stay within the boundary.
+`$claudeBin = Join-Path `$env:USERPROFILE '.local\bin'
+if (Test-Path `$claudeBin) { `$env:PATH = "`$claudeBin;`$env:PATH" }
+
+# Verify claude resolves; if not, tell the user how to install it (as THIS user).
+if (Get-Command claude.exe -ErrorAction SilentlyContinue) {
+    Write-Host "Ready in `$RepoPath. Launch: claude" -ForegroundColor Cyan
+}
+else {
+    Write-Host "Ready in `$RepoPath, but 'claude' was not found." -ForegroundColor Yellow
+    Write-Host "Install it AS THIS USER (do not use a machine-wide install):" -ForegroundColor Yellow
+    Write-Host "  irm https://claude.ai/install.ps1 | iex" -ForegroundColor Cyan
+    Write-Host "Then reopen this shell - the bootstrap puts `$claudeBin on PATH." -ForegroundColor DarkGray
+}
+"@
+Set-Content -Path $BootstrapScript -Value $bootstrap -Encoding UTF8
+Write-Host "  wrote $BootstrapScript" -ForegroundColor Green
+
+# Lock it down: admin-write only, Users get read+execute (run but not modify).
+# Mirrors the managed-settings.json lock so the sandbox user can't tamper with
+# what runs at launch.
+icacls $bootstrapDir /inheritance:r /grant 'Administrators:(OI)(CI)F' 'SYSTEM:(OI)(CI)F' 'Users:(OI)(CI)RX' | Out-Null
+Write-Host "  locked bootstrap dir: Administrators/SYSTEM full, Users read+execute" -ForegroundColor Green
 
 # --- 6. Done ------------------------------------------------------------------
 Write-Step "Setup complete"
@@ -233,10 +277,13 @@ To start a Claude Code session, use the launcher:
 
   .\Start-ClaudeSandbox.ps1
 
-(or directly: runas /user:$UserName "powershell -NoExit -File C:\dev\claude-tools\Enter-ClaudeDevShell.ps1")
+(or directly: runas /user:$UserName "powershell -NoExit -File $BootstrapScript")
 
 Notes:
   - Do NOT use runas /savecred (defeats the boundary).
+  - Install Claude Code AS $UserName (irm https://claude.ai/install.ps1 | iex).
+    A machine-wide or your-profile install can be picked up off the machine PATH
+    and pulls binary/config from OUTSIDE the boundary - keep it per-user here.
   - ClaudeSandbox has its OWN Windows Credential Manager + profile. Set up its
     ADO PAT/git credential separately, scoped minimally. Your secrets are not
     visible to it.
