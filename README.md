@@ -23,13 +23,15 @@ shops. This project is for that case.
    - Hardens it: denies network + RDP logon, password never-expires /
      user-cannot-change, hidden from the login screen. **Interactive logon is
      left enabled on purpose** — the launcher uses it; denying it breaks launch.
-   - Grants it Modify on `C:\dev\repo` (shared with you; sub-repos beneath it
-     are covered via inheritance)
+   - Prompts for the project directory, defaulting to `C:\dev\ClaudeSandbox`,
+     then grants `ClaudeSandbox` Modify on that tree
    - Verifies your profile isn't readable by Users/Everyone (a Standard user is
      denied your profile by default — the script warns if yours is misconfigured)
    - Locates VS Developer Shell + git, generates the Dev Shell bootstrap into
      `C:\ProgramData\claude-win-sandbox\bootstrap\` and locks it admin-write /
      Users-RX (the sandbox user can run it but not modify it)
+   - Can create a desktop shortcut that launches the sandbox for the selected
+     project directory
 
 2. **`managed-settings.json`** (copy once, elevated)
    - Enterprise Claude Code policy: denies obvious secret reads, disables
@@ -39,7 +41,7 @@ shops. This project is for that case.
 3. **`Start-ClaudeSandbox.ps1`** (run per session, normal priv)
    - Prompts for the `ClaudeSandbox` password (via `runas`)
    - Launches a new console as `ClaudeSandbox`, in the Dev Shell, `cd`'d to
-     `C:\dev\repo` (override with `-RepoPath`)
+     `C:\dev\ClaudeSandbox` by default (override with `-RepoPath`)
    - You type `claude` and go
 
 4. **`Check-ClaudeSandbox.ps1`** (run anytime, read-only)
@@ -93,7 +95,7 @@ from **outside** the sandbox — exactly what the boundary is meant to prevent.
 After running setup, start a sandboxed shell and install as `ClaudeSandbox`:
 
 ```powershell
-.\Start-ClaudeSandbox.ps1
+.\Start-ClaudeSandbox.ps1 -RepoPath C:\dev\ClaudeSandbox
 # in the new window (running as ClaudeSandbox):
 irm https://claude.ai/install.ps1 | iex
 ```
@@ -109,6 +111,7 @@ per-user install is present and warns if a copy exists elsewhere.
 ```powershell
 # 1. Provision the user, ACLs, bootstrap  (ELEVATED)
 .\Setup-ClaudeSandbox.ps1
+#   prompts for the project directory; Enter accepts C:\dev\ClaudeSandbox
 
 # 2. Install the Claude Code policy  (ELEVATED)
 New-Item -ItemType Directory -Path C:\ProgramData\ClaudeCode -Force | Out-Null
@@ -117,11 +120,11 @@ $f = 'C:\ProgramData\ClaudeCode\managed-settings.json'
 icacls $f /inheritance:r /grant 'Administrators:F' 'SYSTEM:F' 'Users:R'   # admin-write only
 
 # 3. Install Claude Code AS ClaudeSandbox (see "Installing Claude Code" above)
-.\Start-ClaudeSandbox.ps1
+.\Start-ClaudeSandbox.ps1 -RepoPath C:\dev\ClaudeSandbox
 #   in the new window:  irm https://claude.ai/install.ps1 | iex
 
 # 4. Verify everything took  (ELEVATED for full coverage)
-.\Check-ClaudeSandbox.ps1
+.\Check-ClaudeSandbox.ps1 -RepoPath C:\dev\ClaudeSandbox
 
 # 5. First-time: log in as ClaudeSandbox once to set up its git/ADO credential
 #    (scoped, minimal PAT — kept separate from yours)
@@ -130,8 +133,9 @@ icacls $f /inheritance:r /grant 'Administrators:F' 'SYSTEM:F' 'Users:R'   # admi
 Then, day to day (normal PowerShell, no elevation):
 
 ```powershell
-.\Start-ClaudeSandbox.ps1                       # uses C:\dev\repo
-.\Start-ClaudeSandbox.ps1 -RepoPath C:\dev\other   # or override
+.\Start-ClaudeSandbox.ps1                           # uses C:\dev\ClaudeSandbox
+.\Start-ClaudeSandbox.ps1 -RepoPath C:\dev\other    # or override
+# or use the optional desktop shortcut created by setup
 # enter ClaudeSandbox password (runas) -> new window opens -> type: claude
 ```
 
