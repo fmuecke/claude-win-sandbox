@@ -2,7 +2,8 @@
 <#
 .SYNOPSIS
     Provisions a low-privilege local 'ClaudeSandbox' for running Claude Code with
-    scoped access to C:\dev\repo, while denying access to the calling user's secrets.
+    scoped access to a project directory, while denying access to the calling
+    user's secrets.
 
 .NOTES
     - Run from an ELEVATED PowerShell session.
@@ -16,17 +17,21 @@
     - The Dev Shell bootstrap is generated into ProgramData (Users-traversable by
       default) and locked admin-write/Users-RX, so ClaudeSandbox can run it but
       not modify it.
+    - The sandbox username is baked in (ClaudeSandbox); it is not configurable.
+    - The repo directory is prompted for interactively if not passed.
 #>
 
 [CmdletBinding()]
 param(
-    [string]$RepoPath = 'C:\dev\repo',
-    [string]$UserName = 'ClaudeSandbox',
-    [string]$BootstrapScript = 'C:\ProgramData\claude-win-sandbox\bootstrap\Enter-ClaudeDevShell.ps1',
+    [string]$RepoPath, # if omitted, you will be prompted
     [securestring]$Password # if omitted, you will be prompted
 )
 
 $ErrorActionPreference = 'Stop'
+
+$UserName = 'ClaudeSandbox'   # baked in; not configurable
+$BootstrapScript = 'C:\ProgramData\claude-win-sandbox\bootstrap\Enter-ClaudeDevShell.ps1'    # baked in; not configurable
+
 
 function Write-Step { param($m) Write-Host "`n==> $m" -ForegroundColor Cyan }
 
@@ -35,6 +40,13 @@ $callingUser = [System.Security.Principal.WindowsIdentity]::GetCurrent().Name  #
 $callingProfile = $env:USERPROFILE
 Write-Step "Calling user: $callingUser"
 Write-Step "Protecting profile: $callingProfile"
+
+# --- 0b. Resolve repo directory interactively --------------------------------
+if (-not $RepoPath) {
+    $repoInput = Read-Host "Project directory to scope the sandbox to [C:\dev\ClaudeSandbox]"
+    $RepoPath = if ([string]::IsNullOrWhiteSpace($repoInput)) { 'C:\dev\ClaudeSandbox' } else { $repoInput.Trim() }
+}
+Write-Step "Repo: $RepoPath"
 
 # --- 1. Create the low-priv user ---------------------------------------------
 Write-Step "Ensuring local user '$UserName' exists"
@@ -222,10 +234,10 @@ if (-not (Test-Path $bootstrapDir)) { New-Item -ItemType Directory -Path $bootst
 # NOTE: expandable here-string (@"..."@) so $UserName is baked in at generation
 # time. Runtime $-vars that must survive to execution are escaped as `$.
 $bootstrap = @"
-# VS Developer Shell + cd to repo. Run AS $UserName (via the launcher's runas).
+# VS Developer Shell + cd to repo. Run AS ClaudeSandbox.
 # Uses -VsInstanceId (more reliable than -VsInstallPath discovery under a
 # different user profile). Errors loudly if VS isn't found.
-param([string]`$RepoPath = 'C:\dev\repo')
+param([string]`$RepoPath = 'C:\dev\ClaudeSandbox')
 
 # Guard: this must run as the sandbox user, not whoever launched it. If the
 # bootstrap is invoked directly (no runas), refuse - running as the wrong user
@@ -270,12 +282,50 @@ Write-Host "  wrote $BootstrapScript" -ForegroundColor Green
 icacls $bootstrapDir /inheritance:r /grant 'Administrators:(OI)(CI)F' 'SYSTEM:(OI)(CI)F' 'Users:(OI)(CI)RX' | Out-Null
 Write-Host "  locked bootstrap dir: Administrators/SYSTEM full, Users read+execute" -ForegroundColor Green
 
+# --- 5b. Optional: desktop shortcut for double-click launch ------------------
+Write-Step "Optional desktop shortcut"
+
+$launcher = Join-Path $PSScriptRoot 'Start-ClaudeSandbox.ps1'
+if (-not (Test-Path $launcher)) {
+    Write-Warning "  Start-ClaudeSandbox.ps1 not found next to setup script - skipping shortcut."
+}
+else {
+    $answer = Read-Host "Create a desktop shortcut to launch the sandbox? [Y/n]"
+    if ($answer -match '^(n|no)$') {
+        Write-Host "  skipped." -ForegroundColor Yellow
+    }
+    else {
+        # Calling user's desktop (derived from their profile, not the elevated
+        # process identity) vs. all-users Public desktop.
+        $scope = Read-Host "Place on [c]alling-user desktop or [a]ll-users desktop? [C/a]"
+        if ($scope -match '^(a|all)$') {
+            $desktop = Join-Path $env:PUBLIC 'Desktop'
+        }
+        else {
+            # $callingProfile = the invoking user's profile, captured in section 0.
+            $desktop = Join-Path $callingProfile 'Desktop'
+        }
+
+        $lnkPath = Join-Path $desktop 'Claude (sandboxed).lnk'
+        $wsh = New-Object -ComObject WScript.Shell
+        $sc = $wsh.CreateShortcut($lnkPath)
+        $sc.TargetPath = (Get-Command powershell.exe).Source
+        $sc.Arguments = "-NoProfile -ExecutionPolicy Bypass -File `"$launcher`" -RepoPath `"$RepoPath`""
+        $sc.WorkingDirectory = $RepoPath
+        $sc.IconLocation = "$((Get-Command powershell.exe).Source),0"
+        $sc.Description = 'Launch Claude Code as the low-privilege sandbox user'
+        $sc.Save()
+
+        Write-Host "  created $lnkPath" -ForegroundColor Green
+    }
+}
+
 # --- 6. Done ------------------------------------------------------------------
 Write-Step "Setup complete"
 Write-Host @"
 To start a Claude Code session, use the launcher:
 
-  .\Start-ClaudeSandbox.ps1
+  .\Start-ClaudeSandbox.ps1 -RepoPath "$RepoPath"
 
 (or directly: runas /user:$UserName "powershell -NoExit -File $BootstrapScript")
 

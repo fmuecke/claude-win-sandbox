@@ -13,7 +13,7 @@
     typing - the "hung shell".) runas prompts for the password natively.
 
 .PARAMETER RepoPath
-    Project directory to drop into. Default: C:\dev\repo.
+    Project directory to drop into. Default: C:\dev\ClaudeSandbox.
 
 .PARAMETER UserName
     The low-privilege user to run as. Default: ClaudeSandbox.
@@ -23,7 +23,7 @@
 
 .EXAMPLE
     .\Start-ClaudeSandbox.ps1
-    Prompts for the password, launches a sandboxed Dev Shell in C:\dev\repo.
+    Prompts for the password, launches a sandboxed Dev Shell in C:\dev\ClaudeSandbox.
 
 .EXAMPLE
     .\Start-ClaudeSandbox.ps1 -RepoPath C:\dev\other
@@ -32,7 +32,7 @@
 
 [CmdletBinding()]
 param(
-    [string]$RepoPath = 'C:\dev\repo',
+    [string]$RepoPath = 'C:\dev\ClaudeSandbox',
     [string]$UserName = 'ClaudeSandbox',
     [string]$BootstrapScript = 'C:\ProgramData\claude-win-sandbox\bootstrap\Enter-ClaudeDevShell.ps1'
 )
