@@ -38,6 +38,15 @@ if ($me -ne 'ClaudeSandbox') {
 Write-Host "Running as user $me" -ForegroundColor Green
 Write-Host ""
 
+function Set-ClaudeSandboxWindowTitle {
+    try {
+        $Host.UI.RawUI.WindowTitle = 'Claude Sandbox'
+    }
+    catch {
+        # Some non-console hosts do not expose a mutable window title.
+    }
+}
+
 function Write-SandboxNetworkExposureWarning {
     $mappedDrives = @()
     try {
@@ -95,11 +104,13 @@ function Write-SandboxNetworkExposureWarning {
     }
 }
 
+Set-ClaudeSandboxWindowTitle
 Write-SandboxNetworkExposureWarning
 
 $vs = & "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe" -latest -format json | ConvertFrom-Json
 Import-Module (Join-Path $vs.installationPath 'Common7\Tools\Microsoft.VisualStudio.DevShell.dll')
 Enter-VsDevShell -VsInstanceId $vs.instanceId -SkipAutomaticLocation -DevCmdArguments '-arch=x64'
+Set-ClaudeSandboxWindowTitle
 Set-Location $SandboxPath
 
 # Ensure THIS user's per-user Claude install is on PATH. Self-contained: no
@@ -111,7 +122,8 @@ if (Test-Path $claudeBin) { $env:PATH = "$claudeBin;$env:PATH" }
 
 # Verify claude resolves; if not, tell the user how to install it (as THIS user).
 if (Get-Command claude.exe -ErrorAction SilentlyContinue) {
-    Write-Host "Ready in $SandboxPath. Launch: claude" -ForegroundColor Cyan
+    Write-Host "Ready for claude'ing in $SandboxPath." -ForegroundColor Cyan
+    Write-Host ""
 }
 else {
     Write-Host "Ready in $SandboxPath, but 'claude' was not found." -ForegroundColor Yellow
