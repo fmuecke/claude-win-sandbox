@@ -69,6 +69,26 @@ function Get-LocalUserFirewallSddl {
     param([string]$Sid)
     return "O:LSD:(A;;CC;;;$Sid)"
 }
+function Read-SandboxPassword {
+    param([string]$AccountName)
+
+    while ($true) {
+        $first = Read-Host "Set password for '$AccountName'" -AsSecureString
+        $second = Read-Host "Confirm password for '$AccountName'" -AsSecureString
+        $firstText = [pscredential]::new('user', $first).GetNetworkCredential().Password
+        $secondText = [pscredential]::new('user', $second).GetNetworkCredential().Password
+
+        if ([string]::IsNullOrEmpty($firstText)) {
+            Write-Warning 'Password cannot be empty. Try again.'
+            continue
+        }
+        if ($firstText -ceq $secondText) {
+            return $first
+        }
+
+        Write-Warning 'Passwords did not match. Try again.'
+    }
+}
 function Test-LocalFirewallPolicyApplies {
     try {
         $policy = New-Object -ComObject HNetCfg.FwPolicy2
@@ -138,18 +158,26 @@ Write-Step "Protecting profile: $callingProfile"
 
 # --- 0b. Resolve sandbox workspace directory interactively -------------------
 if (-not $BasePath) {
-    $baseInput = Read-Host "Base directory for the sandbox workspace [C:\dev]"
+    $baseInput = Read-Host "Base directory where the '$SandboxDirectoryName' workspace folder will be created [C:\dev]"
     $BasePath = if ([string]::IsNullOrWhiteSpace($baseInput)) { 'C:\dev' } else { $baseInput.Trim() }
 }
 $SandboxPath = Join-Path $BasePath $SandboxDirectoryName
 Write-Step "Sandbox workspace: $SandboxPath"
+if (Test-Path $SandboxPath) {
+    $answer = Read-Host "Sandbox workspace already exists. Use this existing shared folder? [y/N]"
+    if ($answer -notmatch '^(y|yes)$') {
+        Write-Host 'Cancelled. Choose another base directory or review the existing workspace first.' -ForegroundColor Yellow
+        exit 1
+    }
+    Write-Host "  using existing shared workspace: $SandboxPath" -ForegroundColor Yellow
+}
 
 # --- 1. Create the low-priv user ---------------------------------------------
 Write-Step "Ensuring local user '$UserName' exists"
 $existing = Get-LocalUser -Name $UserName -ErrorAction SilentlyContinue
 if (-not $existing) {
     if (-not $Password) {
-        $Password = Read-Host "Set password for '$UserName'" -AsSecureString
+        $Password = Read-SandboxPassword -AccountName $UserName
     }
     New-LocalUser -Name $UserName -Password $Password `
         -FullName 'Claude Code Sandbox User' `
