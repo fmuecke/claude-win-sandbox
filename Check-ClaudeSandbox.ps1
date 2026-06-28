@@ -4,9 +4,6 @@
     toolchain, and the assumptions the boundary depends on. Read-only - makes no
     changes. Safe to run anytime, including as a post-launch diagnostic.
 
-.PARAMETER RepoPath
-    Shared project directory. Default: C:\dev\repo.
-
 .PARAMETER UserName
     Low-privilege sandbox user. Default: ClaudeSandbox.
 
@@ -15,6 +12,9 @@
 
 .PARAMETER ManagedSettings
     Claude Code enterprise policy file.
+
+.PARAMETER ConfigFile
+    claude-win-sandbox ProgramData config file.
 
 .EXAMPLE
     .\Check-ClaudeSandbox.ps1
@@ -29,10 +29,10 @@
 
 [CmdletBinding()]
 param(
-    [string]$RepoPath = 'C:\dev\repo',
     [string]$UserName = 'ClaudeSandbox',
     [string]$BootstrapScript = 'C:\ProgramData\claude-win-sandbox\bootstrap\Enter-ClaudeDevShell.ps1',
-    [string]$ManagedSettings = 'C:\ProgramData\ClaudeCode\managed-settings.json'
+    [string]$ManagedSettings = 'C:\ProgramData\ClaudeCode\managed-settings.json',
+    [string]$ConfigFile = 'C:\ProgramData\claude-win-sandbox\config.json'
 )
 
 $script:fails = 0
@@ -42,11 +42,83 @@ function Pass { param($m) Write-Host "  [PASS] $m" -ForegroundColor Green }
 function Warn { param($m) Write-Host "  [WARN] $m" -ForegroundColor Yellow; $script:warns++ }
 function Fail { param($m) Write-Host "  [FAIL] $m" -ForegroundColor Red; $script:fails++ }
 function Section { param($m) Write-Host "`n== $m ==" -ForegroundColor Cyan }
+function Get-NonAdminWritableAce {
+    param(
+        [System.Security.AccessControl.FileSystemSecurity]$Acl,
+        [string]$UserName
+    )
+    $identityPattern = "\\($([regex]::Escape($UserName))|Users|Everyone|Authenticated Users)$|^Everyone$"
+    $Acl.Access | Where-Object {
+        $_.AccessControlType -eq 'Allow' -and
+        $_.FileSystemRights -match 'Write|Modify|FullControl|Delete|ChangePermissions|TakeOwnership' -and
+        $_.IdentityReference -match $identityPattern
+    }
+}
+function Test-ProgramDataLock {
+    param(
+        [string]$Path,
+        [string]$Description,
+        [string]$UserName
+    )
+    if (-not (Test-Path $Path)) {
+        Fail "$Description missing: $Path"
+        return
+    }
+
+    $acl = Get-Acl $Path
+    $writable = Get-NonAdminWritableAce -Acl $acl -UserName $UserName
+    if ($writable) {
+        $principals = ($writable.IdentityReference | Sort-Object -Unique) -join ', '
+        Fail "$Description is writable by non-admin principals: $principals"
+    }
+    else {
+        Pass "$Description is admin-write-only."
+    }
+}
 
 $isAdmin = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()
 ).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
 if (-not $isAdmin) {
     Write-Host "Note: not elevated - some checks (user-rights, HKLM, other profiles) may be limited." -ForegroundColor DarkYellow
+}
+
+# --- 0. ProgramData config ----------------------------------------------------
+Section "Sandbox configuration"
+$SandboxPath = $null
+if (-not (Test-Path $ConfigFile)) {
+    Fail "Config missing: $ConfigFile - run setup."
+    Section "Summary"
+    Write-Host "  $script:fails FAIL, $script:warns WARN." -ForegroundColor Red
+    exit 1
+}
+else {
+    Pass "Config present: $ConfigFile"
+    try {
+        $config = Get-Content $ConfigFile -Raw | ConvertFrom-Json
+        $SandboxPath = $config.sandboxPath
+        if ([string]::IsNullOrWhiteSpace($SandboxPath)) {
+            Fail "Config does not define sandboxPath."
+        }
+        elseif ((Split-Path $SandboxPath -Leaf) -ne 'ClaudeSandbox') {
+            Fail "sandboxPath must end in the fixed directory name 'ClaudeSandbox': $SandboxPath"
+        }
+        else {
+            Pass "Configured sandbox path: $SandboxPath"
+        }
+    }
+    catch {
+        Fail "Config file is not valid JSON: $($_.Exception.Message)"
+    }
+
+    $programDataRoot = Split-Path $ConfigFile -Parent
+    Test-ProgramDataLock -Path $programDataRoot -Description 'ProgramData sandbox directory' -UserName $UserName
+    Test-ProgramDataLock -Path $ConfigFile -Description 'Sandbox config file' -UserName $UserName
+
+    if ([string]::IsNullOrWhiteSpace($SandboxPath) -or ((Split-Path $SandboxPath -Leaf) -ne 'ClaudeSandbox')) {
+        Section "Summary"
+        Write-Host "  $script:fails FAIL, $script:warns WARN." -ForegroundColor Red
+        exit 1
+    }
 }
 
 # --- 1. User exists and is not admin -----------------------------------------
@@ -133,19 +205,19 @@ $hidden = (Get-ItemProperty -Path $ualPath -Name $UserName -ErrorAction Silently
 if ($hidden -eq 0) { Pass "Hidden from the login screen." }
 else { Warn "Not hidden from the login screen (cosmetic)." }
 
-# --- 3. Repo ACLs -------------------------------------------------------------
-Section "Repo permissions ($RepoPath)"
-if (-not (Test-Path $RepoPath)) {
-    Warn "Repo path does not exist yet."
+# --- 3. Workspace ACLs --------------------------------------------------------
+Section "Workspace permissions"
+if (-not (Test-Path $SandboxPath)) {
+    Fail "Sandbox path does not exist: $SandboxPath"
 }
 else {
-    $acl = Get-Acl $RepoPath
+    $acl = Get-Acl $SandboxPath
     $userAce = $acl.Access | Where-Object { $_.IdentityReference -match "\\$UserName$" }
     if ($userAce | Where-Object { $_.FileSystemRights -match 'Modify|FullControl|Write' }) {
-        Pass "'$UserName' has write access to the repo (and sub-repos, via inheritance)."
+        Pass "'$UserName' has write access to the workspace (and sub-repos, via inheritance)."
     }
     else {
-        Fail "'$UserName' lacks write access to the repo - Claude can't edit code."
+        Fail "'$UserName' lacks write access to the workspace - Claude can't edit code."
     }
 }
 
@@ -171,21 +243,13 @@ if (Test-Path $BootstrapScript) {
     Pass "Bootstrap present: $BootstrapScript"
 
     # The bootstrap must be runnable by ClaudeSandbox but NOT writable by it -
-    # otherwise the agent could rewrite what runs at next launch. Verify the dir
-    # is admin-write / Users-RX (locked like managed-settings.json).
+    # otherwise the agent could rewrite what runs at next launch. Verify the
+    # ProgramData project dir, bootstrap dir, and script are admin-write only.
+    $programDataRoot = Split-Path (Split-Path $BootstrapScript -Parent) -Parent
     $bootstrapDir = Split-Path $BootstrapScript -Parent
-    $bacl = Get-Acl $bootstrapDir
-    $writableByUsers = $bacl.Access | Where-Object {
-        $_.AccessControlType -eq 'Allow' -and
-        $_.FileSystemRights -match 'Write|Modify|FullControl' -and
-        $_.IdentityReference -match '\\(Users|Everyone|Authenticated Users)$|^Everyone$'
-    }
-    if ($writableByUsers) {
-        Fail "Bootstrap dir is writable by non-admins - $UserName could alter what runs at launch."
-    }
-    else {
-        Pass "Bootstrap dir is admin-write-only (Users can run, not modify)."
-    }
+    Test-ProgramDataLock -Path $programDataRoot -Description 'ProgramData sandbox directory' -UserName $UserName
+    Test-ProgramDataLock -Path $bootstrapDir -Description 'Bootstrap directory' -UserName $UserName
+    Test-ProgramDataLock -Path $BootstrapScript -Description 'Bootstrap script' -UserName $UserName
 }
 else {
     Fail "Bootstrap missing: $BootstrapScript - run setup."
@@ -274,15 +338,10 @@ else {
     catch {
         Fail "Policy file is not valid JSON: $($_.Exception.Message)"
     }
-    # Policy file should be admin-write-only.
-    $pacl = Get-Acl $ManagedSettings
-    $writableByUsers = $pacl.Access | Where-Object {
-        $_.AccessControlType -eq 'Allow' -and
-        $_.FileSystemRights -match 'Write|Modify|FullControl' -and
-        $_.IdentityReference -match '\\(Users|Everyone|Authenticated Users)$|^Everyone$'
-    }
-    if ($writableByUsers) { Fail "Policy file is writable by non-admins - ClaudeSandbox could disable it." }
-    else { Pass "Policy file is admin-write-only." }
+    # Policy location should be admin-write-only.
+    $policyDir = Split-Path $ManagedSettings -Parent
+    Test-ProgramDataLock -Path $policyDir -Description 'ClaudeCode policy directory' -UserName $UserName
+    Test-ProgramDataLock -Path $ManagedSettings -Description 'Policy file' -UserName $UserName
 }
 
 # --- Summary ------------------------------------------------------------------

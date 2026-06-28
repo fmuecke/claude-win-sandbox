@@ -1,0 +1,44 @@
+# Repository Guidelines
+
+## Project Structure & Module Organization
+
+This repository contains a small Windows PowerShell toolset for running Claude Code as a low-privilege local user.
+
+- `Setup-ClaudeSandbox.ps1`: one-time elevated provisioning for the `ClaudeSandbox` user, ACLs, hardening, and bootstrap generation.
+- `Start-ClaudeSandbox.ps1`: normal day-to-day launcher using `runas`.
+- `Check-ClaudeSandbox.ps1`: read-only verifier for account state, ACLs, bootstrap, policy, and toolchain assumptions.
+- `managed-settings.json`: Claude Code enterprise policy intended for `C:\ProgramData\ClaudeCode\`.
+- `README.md`: user-facing setup and threat-model documentation.
+- `discovery/`: research notes and design background. Do not treat these as executable source.
+
+## Build, Test, and Development Commands
+
+There is no build step. Validate script changes with parser checks before committing:
+
+```powershell
+$errors=$null; [System.Management.Automation.Language.Parser]::ParseFile((Resolve-Path .\Setup-ClaudeSandbox.ps1), [ref]$null, [ref]$errors); $errors
+$errors=$null; [System.Management.Automation.Language.Parser]::ParseFile((Resolve-Path .\Start-ClaudeSandbox.ps1), [ref]$null, [ref]$errors); $errors
+git diff --check
+```
+
+Use `.\Check-ClaudeSandbox.ps1` to verify an installed sandbox. Run elevated for full coverage.
+
+## Coding Style & Naming Conventions
+
+Use PowerShell with 4-space indentation. Keep functions small and named with approved verb-style names where practical, such as `Write-Step`. Prefer explicit paths and clear parameter names over implicit global state. Preserve the existing section-banner comment style for major script phases.
+
+Use single quotes for literal strings and double quotes only when interpolation is needed. In expandable here-strings that generate scripts, escape runtime variables with a backtick, for example `` `$RepoPath ``.
+
+## Testing Guidelines
+
+Avoid executing provisioning paths casually: `Setup-ClaudeSandbox.ps1` changes local users, ACLs, registry values, and security policy. For review, prefer parser checks, `git diff --check`, and close inspection of generated script strings. Test real setup changes on a disposable Windows VM or dedicated dev machine.
+
+## Commit & Pull Request Guidelines
+
+Recent commit messages are short, imperative summaries, for example `Harden sandbox bootstrap and require per-user Claude installs`. Keep commits focused on one intent.
+
+Pull requests should include the intent, affected scripts, manual validation performed, and any security-boundary implications. Mention whether elevated commands were run and whether behavior was tested on a clean or existing `ClaudeSandbox` account.
+
+## Security & Configuration Tips
+
+Do not add credential caching or broaden the sandbox user’s access without documenting the threat-model tradeoff. Keep `ClaudeSandbox` as a standard user, keep the bootstrap admin-write/Users-read-execute, and keep Claude installed per-user under `C:\Users\ClaudeSandbox`.

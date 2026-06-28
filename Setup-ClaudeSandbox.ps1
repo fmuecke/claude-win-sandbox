@@ -2,34 +2,38 @@
 <#
 .SYNOPSIS
     Provisions a low-privilege local 'ClaudeSandbox' for running Claude Code with
-    scoped access to a project directory, while denying access to the calling
+    scoped access to a fixed workspace directory, while denying access to the calling
     user's secrets.
 
 .NOTES
     - Run from an ELEVATED PowerShell session.
     - Model: ClaudeSandbox is a STANDARD user. Windows default ACLs already deny it
       access to other users' profiles and admin areas. We GRANT the few extra
-      paths it needs (repo, its own profile) and add EXPLICIT DENY only on the
+      paths it needs (sandbox workspace, its own profile) and add EXPLICIT DENY only on the
       current user's sensitive dirs as belt-and-suspenders.
     - VS + Git are assumed installed machine-wide (default). A Standard user can
       run them already; no extra grants needed for Program Files.
     - DENY ACEs override ALLOW. Review every Deny path before running.
-    - The Dev Shell bootstrap is generated into ProgramData (Users-traversable by
-      default) and locked admin-write/Users-RX, so ClaudeSandbox can run it but
-      not modify it.
-    - The sandbox username is baked in (ClaudeSandbox); it is not configurable.
-    - The repo directory is prompted for interactively if not passed.
+    - The workspace config and Dev Shell bootstrap are generated into ProgramData
+      (Users-traversable by default) and locked admin-write/Users-RX, so
+      ClaudeSandbox can read/run them but not modify them.
+    - The sandbox username and workspace directory name are baked in
+      (ClaudeSandbox); they are not configurable.
+    - The workspace base directory is prompted for interactively if not passed.
 #>
 
 [CmdletBinding()]
 param(
-    [string]$RepoPath, # if omitted, you will be prompted
+    [string]$BasePath, # if omitted, you will be prompted
     [securestring]$Password # if omitted, you will be prompted
 )
 
 $ErrorActionPreference = 'Stop'
 
 $UserName = 'ClaudeSandbox'   # baked in; not configurable
+$SandboxDirectoryName = 'ClaudeSandbox'   # baked in; not configurable
+$ProgramDataRoot = 'C:\ProgramData\claude-win-sandbox'    # baked in; not configurable
+$ConfigFile = Join-Path $ProgramDataRoot 'config.json'
 $BootstrapScript = 'C:\ProgramData\claude-win-sandbox\bootstrap\Enter-ClaudeDevShell.ps1'    # baked in; not configurable
 
 
@@ -41,12 +45,13 @@ $callingProfile = $env:USERPROFILE
 Write-Step "Calling user: $callingUser"
 Write-Step "Protecting profile: $callingProfile"
 
-# --- 0b. Resolve repo directory interactively --------------------------------
-if (-not $RepoPath) {
-    $repoInput = Read-Host "Project directory to scope the sandbox to [C:\dev\ClaudeSandbox]"
-    $RepoPath = if ([string]::IsNullOrWhiteSpace($repoInput)) { 'C:\dev\ClaudeSandbox' } else { $repoInput.Trim() }
+# --- 0b. Resolve sandbox workspace directory interactively -------------------
+if (-not $BasePath) {
+    $baseInput = Read-Host "Base directory for the sandbox workspace [C:\dev]"
+    $BasePath = if ([string]::IsNullOrWhiteSpace($baseInput)) { 'C:\dev' } else { $baseInput.Trim() }
 }
-Write-Step "Repo: $RepoPath"
+$SandboxPath = Join-Path $BasePath $SandboxDirectoryName
+Write-Step "Sandbox workspace: $SandboxPath"
 
 # --- 1. Create the low-priv user ---------------------------------------------
 Write-Step "Ensuring local user '$UserName' exists"
@@ -144,20 +149,31 @@ if (-not (Test-Path $ualPath)) { New-Item -Path $ualPath -Force | Out-Null }
 New-ItemProperty -Path $ualPath -Name $UserName -Value 0 -PropertyType DWord -Force | Out-Null
 Write-Host "  hidden from the login screen" -ForegroundColor Green
 
-# --- 2. Shared repo permissions ----------------------------------------------
-Write-Step "Configuring shared repo at $RepoPath"
-if (-not (Test-Path $RepoPath)) {
-    New-Item -ItemType Directory -Path $RepoPath -Force | Out-Null
-    Write-Host "  created $RepoPath" -ForegroundColor Green
+# --- 2. Shared workspace permissions -----------------------------------------
+Write-Step "Configuring shared workspace at $SandboxPath"
+if (-not (Test-Path $SandboxPath)) {
+    New-Item -ItemType Directory -Path $SandboxPath -Force | Out-Null
+    Write-Host "  created $SandboxPath" -ForegroundColor Green
 }
-# Grant calling user + ClaudeSandbox Modify on the repo tree (inherited).
-# Sub-repos beneath this dir are covered by inheritance.
+# Grant calling user + ClaudeSandbox Modify on the workspace tree (inherited).
+# Repos beneath this dir are covered by inheritance.
 # Using icacls; (OI)(CI) = object + container inherit, M = Modify.
-icacls $RepoPath /grant "${callingUser}:(OI)(CI)M" | Out-Null
-icacls $RepoPath /grant "${UserName}:(OI)(CI)M"     | Out-Null
+icacls $SandboxPath /grant "${callingUser}:(OI)(CI)M" | Out-Null
+icacls $SandboxPath /grant "${UserName}:(OI)(CI)M"     | Out-Null
 Write-Host "  granted Modify to $callingUser and $UserName" -ForegroundColor Green
 
-# --- 3. Verify the calling user's profile is not world/Users-readable --------
+# --- 3. Write ProgramData configuration --------------------------------------
+# ProgramData config is the single source of truth for the sandbox path.
+# ClaudeSandbox can read it at launch but cannot alter where the bootstrap lands.
+Write-Step "Writing sandbox configuration to ProgramData"
+if (-not (Test-Path $ProgramDataRoot)) { New-Item -ItemType Directory -Path $ProgramDataRoot -Force | Out-Null }
+$config = [ordered]@{
+    sandboxPath = $SandboxPath
+}
+$config | ConvertTo-Json | Set-Content -Path $ConfigFile -Encoding UTF8
+Write-Host "  wrote $ConfigFile" -ForegroundColor Green
+
+# --- 4. Verify the calling user's profile is not world/Users-readable --------
 # On a standard Windows config, C:\Users\<you> is accessible only to that user,
 # SYSTEM, and Administrators. A Standard user (ClaudeSandbox) is denied by default,
 # so NO explicit deny ACEs are needed - and explicit denies are brittle
@@ -190,7 +206,7 @@ Write-Warning "Optional hardening note: if you keep secrets OUTSIDE your profile
 Write-Warning "KeePass vault under C:\, a shared drive), verify those paths separately - the"
 Write-Warning "profile-default protection does not extend to them."
 
-# --- 4. Verify VS Developer Shell + Git availability for the user ------------
+# --- 5. Verify VS Developer Shell + Git availability for the user ------------
 Write-Step "Locating Visual Studio Developer Shell + Git (machine-wide)"
 
 # vswhere is the supported way to find the VS install + dev shell module.
@@ -221,7 +237,7 @@ else {
 # A standard user can execute both already. No grants needed because they live
 # in Program Files (readable+executable by Users by default).
 
-# --- 5. Generate the Dev Shell bootstrap into ProgramData --------------------
+# --- 6. Generate the Dev Shell bootstrap into ProgramData --------------------
 # ProgramData is traversable by Users by default, so ClaudeSandbox can reach the
 # bootstrap regardless of where this repo was cloned (no profile-traversal trap).
 # We GENERATE it here and LOCK it admin-write / Users-RX, so the sandbox user can
@@ -231,13 +247,36 @@ Write-Step "Writing the Developer-Shell bootstrap to ProgramData"
 $bootstrapDir = Split-Path $BootstrapScript -Parent
 if (-not (Test-Path $bootstrapDir)) { New-Item -ItemType Directory -Path $bootstrapDir -Force | Out-Null }
 
-# NOTE: expandable here-string (@"..."@) so $UserName is baked in at generation
-# time. Runtime $-vars that must survive to execution are escaped as `$.
+# NOTE: expandable here-string (@"..."@) so $UserName and $ConfigFile are baked
+# in at generation time. Runtime $-vars that must survive to execution are
+# escaped as `$.
+$configFileLiteral = $ConfigFile -replace "'", "''"
 $bootstrap = @"
-# VS Developer Shell + cd to repo. Run AS ClaudeSandbox.
+# VS Developer Shell + cd to sandbox workspace. Run AS ClaudeSandbox.
 # Uses -VsInstanceId (more reliable than -VsInstallPath discovery under a
 # different user profile). Errors loudly if VS isn't found.
-param([string]`$RepoPath = 'C:\dev\ClaudeSandbox')
+`$ConfigFile = '$configFileLiteral'
+if (-not (Test-Path `$ConfigFile)) {
+    Write-Host "Sandbox config missing: `$ConfigFile" -ForegroundColor Red
+    Write-Host "Run Setup-ClaudeSandbox.ps1 again." -ForegroundColor Yellow
+    exit 1
+}
+try {
+    `$config = Get-Content `$ConfigFile -Raw | ConvertFrom-Json
+    `$SandboxPath = `$config.sandboxPath
+}
+catch {
+    Write-Host "Sandbox config is invalid: `$(`$_.Exception.Message)" -ForegroundColor Red
+    exit 1
+}
+if ([string]::IsNullOrWhiteSpace(`$SandboxPath)) {
+    Write-Host "Sandbox config does not define sandboxPath." -ForegroundColor Red
+    exit 1
+}
+if (-not (Test-Path `$SandboxPath)) {
+    Write-Host "Sandbox path does not exist: `$SandboxPath" -ForegroundColor Red
+    exit 1
+}
 
 # Guard: this must run as the sandbox user, not whoever launched it. If the
 # bootstrap is invoked directly (no runas), refuse - running as the wrong user
@@ -253,7 +292,7 @@ Write-Host "Running as `$me" -ForegroundColor Green
 `$vs = & "`${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe" -latest -format json | ConvertFrom-Json
 Import-Module (Join-Path `$vs.installationPath 'Common7\Tools\Microsoft.VisualStudio.DevShell.dll')
 Enter-VsDevShell -VsInstanceId `$vs.instanceId -SkipAutomaticLocation -DevCmdArguments '-arch=x64'
-Set-Location `$RepoPath
+Set-Location `$SandboxPath
 
 # Ensure THIS user's per-user Claude install is on PATH. Self-contained: no
 # dependency on the persisted User PATH. Prepend so the sandbox user's own copy
@@ -264,10 +303,10 @@ if (Test-Path `$claudeBin) { `$env:PATH = "`$claudeBin;`$env:PATH" }
 
 # Verify claude resolves; if not, tell the user how to install it (as THIS user).
 if (Get-Command claude.exe -ErrorAction SilentlyContinue) {
-    Write-Host "Ready in `$RepoPath. Launch: claude" -ForegroundColor Cyan
+    Write-Host "Ready in `$SandboxPath. Launch: claude" -ForegroundColor Cyan
 }
 else {
-    Write-Host "Ready in `$RepoPath, but 'claude' was not found." -ForegroundColor Yellow
+    Write-Host "Ready in `$SandboxPath, but 'claude' was not found." -ForegroundColor Yellow
     Write-Host "Install it AS THIS USER (do not use a machine-wide install):" -ForegroundColor Yellow
     Write-Host "  irm https://claude.ai/install.ps1 | iex" -ForegroundColor Cyan
     Write-Host "Then reopen this shell - the bootstrap puts `$claudeBin on PATH." -ForegroundColor DarkGray
@@ -276,13 +315,14 @@ else {
 Set-Content -Path $BootstrapScript -Value $bootstrap -Encoding UTF8
 Write-Host "  wrote $BootstrapScript" -ForegroundColor Green
 
-# Lock it down: admin-write only, Users get read+execute (run but not modify).
-# Mirrors the managed-settings.json lock so the sandbox user can't tamper with
-# what runs at launch.
+# Lock ProgramData artifacts down: admin-write only, Users get read+execute
+# (read/run but not modify). Mirrors the managed-settings.json lock so the
+# sandbox user can't tamper with config or what runs at launch.
+icacls $ProgramDataRoot /inheritance:r /grant 'Administrators:(OI)(CI)F' 'SYSTEM:(OI)(CI)F' 'Users:(OI)(CI)RX' | Out-Null
 icacls $bootstrapDir /inheritance:r /grant 'Administrators:(OI)(CI)F' 'SYSTEM:(OI)(CI)F' 'Users:(OI)(CI)RX' | Out-Null
-Write-Host "  locked bootstrap dir: Administrators/SYSTEM full, Users read+execute" -ForegroundColor Green
+Write-Host "  locked ProgramData artifacts: Administrators/SYSTEM full, Users read+execute" -ForegroundColor Green
 
-# --- 5b. Optional: desktop shortcut for double-click launch ------------------
+# --- 6b. Optional: desktop shortcut for double-click launch ------------------
 Write-Step "Optional desktop shortcut"
 
 $launcher = Join-Path $PSScriptRoot 'Start-ClaudeSandbox.ps1'
@@ -310,8 +350,8 @@ else {
         $wsh = New-Object -ComObject WScript.Shell
         $sc = $wsh.CreateShortcut($lnkPath)
         $sc.TargetPath = (Get-Command powershell.exe).Source
-        $sc.Arguments = "-NoProfile -ExecutionPolicy Bypass -File `"$launcher`" -RepoPath `"$RepoPath`""
-        $sc.WorkingDirectory = $RepoPath
+        $sc.Arguments = "-NoProfile -ExecutionPolicy Bypass -File `"$launcher`""
+        $sc.WorkingDirectory = $SandboxPath
         $sc.IconLocation = "$((Get-Command powershell.exe).Source),0"
         $sc.Description = 'Launch Claude Code as the low-privilege sandbox user'
         $sc.Save()
@@ -325,7 +365,7 @@ Write-Step "Setup complete"
 Write-Host @"
 To start a Claude Code session, use the launcher:
 
-  .\Start-ClaudeSandbox.ps1 -RepoPath "$RepoPath"
+  .\Start-ClaudeSandbox.ps1
 
 (or directly: runas /user:$UserName "powershell -NoExit -File $BootstrapScript")
 

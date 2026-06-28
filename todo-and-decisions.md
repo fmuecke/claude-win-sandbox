@@ -1,0 +1,140 @@
+# claude-win-sandbox — Todo & Decisions
+
+Running log to update the project step by step. Captures decisions already made
+(with rationale) and open items still to action. Personal/career discussions are
+deliberately excluded.
+
+_Last updated: 2026-06-27_
+
+---
+
+## Decisions made (rationale captured)
+
+### Architecture & isolation
+- **Separate low-priv user (`ClaudeSandbox`) is the boundary.** NTFS ACLs do the
+  enforcing; the agent physically can't reach what the user can't reach. Chosen
+  over Docker/WSL2 because the native Windows + MSVC + on-prem toolchain can't
+  move into a Linux container.
+- **`managed-settings.json` deny rules are defense-in-depth (belt), not the
+  enforcement layer.** The ACL boundary is the real control.
+- **Threat model = blast-radius reduction, not hard containment.** Defends against
+  agent mistakes and prompt-injection overreach on a trusted machine; not against
+  a determined attacker who already has your privileges.
+- **`runas.exe` over `Start-Process -Credential`.** The latter produces a hung
+  shell (renders but won't accept keyboard input) — confirmed on this machine.
+- **No credential caching.** The per-launch `runas` password prompt is the only
+  credential path; acts as a deliberate speed-bump / cross-user boundary enforcer.
+  Infrequent use doesn't justify the security tradeoff of caching.
+- **Short fixed password (Option A) over per-launch random reset (Option B).** The
+  prompt is friction, not a true gate; Option B added elevated prompts every launch
+  and extra failure points for marginal value.
+
+### Account hardening
+- **Interactive logon stays ENABLED on purpose** — the launcher needs it; denying
+  it breaks launch. Deny only network + RDP logon.
+- **Password never-expires + user-cannot-change**, account hidden from login screen.
+
+### Filesystem layout (DECIDED — partially implemented, see Todo)
+- **Config/bootstrap/managed-settings → ProgramData**
+  (`C:\ProgramData\claude-win-sandbox\config.json` for the sandbox path,
+  `C:\ProgramData\claude-win-sandbox\bootstrap\` for the bootstrap,
+  `C:\ProgramData\ClaudeCode\` for policy), admin-write and Users-RX/read only
+  — not writable by sandbox user, prevents launch/config/policy poisoning.
+- **Workspace default → `C:\dev\ClaudeSandbox\`** with setup asking only for the
+  base directory. Chosen over `C:\Users\Public\` as the most developer-intuitive
+  tradeoff; awareness carried by naming + in-shell prompt marker, not ownership
+  semantics.
+- **`ClaudeSandbox` is a fixed, well-known workspace name** (base path
+  configurable, name always `ClaudeSandbox`) — for user awareness, not security.
+- **Dropped the `repos\` subdirectory** as unnecessary ceremony; README in the
+  workspace root carries the explanatory load.
+- **Setup regenerates ProgramData artifacts** from the repo source and writes the
+  resolved sandbox path to ProgramData config; the project repo remains the
+  source of truth for scripts.
+
+### Bootstrap hardening
+- **Bootstrap locked admin-write / Users-RX** so the sandbox user can't modify its
+  own launch script.
+- **User-identity guard** in the bootstrap: exits if `$env:USERNAME` doesn't match
+  the sandbox account (prevents direct invocation as the wrong user).
+- **"Running as &lt;user&gt;" greeting** printed before VS Dev Shell output.
+- **`Enter-VsDevShell -VsInstanceId`** (from `vswhere -format json`) rather than
+  `-VsInstallPath` discovery, which can hang under a different user profile.
+
+### Claude Code install
+- **Installed per-user under `ClaudeSandbox`**, not machine-wide — prevents
+  binary/config leakage via machine PATH.
+
+### IDE / launch UX
+- **Full Visual Studio embedding ruled out** — no terminal-profile equivalent;
+  a VSIX tool window would still fight the cross-user input problem. Not worth it.
+- **VS Code NOT being pursued right now** (despite being the cleanest integration
+  path if VS Code itself were launched as `ClaudeSandbox`).
+- **Preferred mitigation: dedicated Windows Terminal tab** to reduce alt-tab
+  friction. Profile snippet drafted; not yet finalized/committed.
+
+### Distribution & IP
+- **PSGallery chosen as distribution channel** (over winget) — real need is easy
+  setup/updates, not silent provisioning; and public credit is wanted.
+- **Stays a personal, public, open-source hobby project** (MIT, © Florian Mücke
+  2026), maintained at own pace.
+
+### PowerShell 5.1 quirks (learnings to respect)
+- `?.` null-conditional operator unavailable.
+- `Select-String .LineNumber` fragile for `secedit` parsing → use index-based
+  parsing.
+- Avoid `$input` as a variable name (automatic pipeline variable).
+- `secedit` normalizes to account name on this machine → checker must match both
+  `*SID` and bare account-name forms.
+
+---
+
+## Todo / open items
+
+### Implementation — filesystem layout migration
+- [x] Move bootstrap default to `C:\ProgramData\claude-win-sandbox\bootstrap\`.
+- [x] Move workspace default from `C:\dev\repo` → `C:\dev\ClaudeSandbox\` in
+      setup/start paths.
+- [x] Update `Setup-ClaudeSandbox.ps1` to prompt for the workspace base
+      directory and apply Modify grants to the fixed `ClaudeSandbox` child tree.
+- [x] Add optional desktop shortcut for the fixed bootstrap workspace.
+- [x] Update `Check-ClaudeSandbox.ps1` paths + ProgramData lock verification.
+- [x] Update README default paths and setup flow.
+- [ ] Decide whether `Setup` should deploy launcher/check scripts themselves to
+      `C:\ProgramData\claude-win-sandbox\`, or keep launching from the repo plus
+      locked ProgramData bootstrap.
+- [ ] Update the Windows Terminal profile snippet once the final launcher location
+      is decided.
+
+### Launch UX
+- [ ] Finalize the Windows Terminal profile (test `runas` desktop-attachment
+      behaviour first — does it dock or detach?).
+- [ ] **Decide:** pursue "VS Code launched as `ClaudeSandbox`" for tighter IDE
+      integration, or leave as WT-tab only?
+
+### Git collaboration hardening (deferred to a hardening pass)
+- [ ] Address git-hook / `.git/config` / filter-driver injection vector on the
+      shared repo. Short-term "belt and buckles": `core.hooksPath` redirect +
+      explicit NTFS deny ACEs on `.git/config` and `.git/hooks/`.
+- [ ] Long-term: Path A — separate clones, fetch-based collaboration (the
+      architecturally sound answer).
+
+### Higher-risk workflows
+- [ ] Explore Hyper-V VM / Dev Box isolation for YOLO-mode agent workflows.
+
+### Tool-agnostic generalization (from Copilot CLI discussion)
+- [ ] Consider generalizing the harness to `-Agent Claude|Copilot`. One isolation
+      pattern, two policy models — NTFS boundary generalizes; defense-in-depth
+      layer differs (Copilot CLI: server-side org policy, no local
+      `managed-settings.json` equivalent; needs PAT with Copilot Requests scope +
+      a seat).
+- [ ] Verify whether Copilot CLI network egress can be restricted locally or only
+      at the network layer.
+
+---
+
+## Parking lot / nice-to-have
+- [ ] Egress allowlist for the sandbox process (e.g. `api.anthropic.com`,
+      `dev.azure.com`) — easier on a VM than a dev machine.
+- [ ] Pre-commit secrets scanning (`gitleaks` / `detect-secrets`) as an active
+      layer beyond content exclusions.
