@@ -5,7 +5,7 @@
 This repository contains a small Windows PowerShell toolset for running Claude Code as a low-privilege local user.
 
 - `Setup-ClaudeSandbox.ps1`: one-time elevated provisioning for the `ClaudeSandbox` user, ACLs, hardening, and bootstrap installation.
-- `Remove-ClaudeSandbox.ps1`: elevated teardown for the `ClaudeSandbox` user, sandbox ACL grants, firewall rules, login-screen registry value, and generated ProgramData state.
+- `Remove-ClaudeSandbox.ps1`: elevated teardown for the `ClaudeSandbox` user, firewall rules, login-screen registry value, and generated ProgramData state.
 - `Start-ClaudeSandbox.ps1`: normal day-to-day launcher using `runas`.
 - `Check-ClaudeSandbox.ps1`: read-only verifier for account state, ACLs, bootstrap, policy, and toolchain assumptions.
 - `bootstrap/`: source bootstrap scripts copied into locked ProgramData by setup.

@@ -431,7 +431,7 @@ else {
 # --- 6. Done ------------------------------------------------------------------
 Write-Step "Setup complete"
 Write-Host @"
-To start a Claude Code session, use the launcher:
+To start a Claude Code session, use the launcher (or the optional desktop shortcut):
 
   .\Start-ClaudeSandbox.ps1
 

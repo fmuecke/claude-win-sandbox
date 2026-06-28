@@ -11,28 +11,18 @@
     ProgramData files under C:\ProgramData\claude-win-sandbox, and the optional
     Public Desktop shortcut.
 
-    It deliberately does NOT delete the shared sandbox workspace directory. The
-    script removes the ClaudeSandbox ACL grant from that directory when it can
-    resolve the path from ProgramData config or -SandboxPath. Delete the
-    workspace manually if it is no longer needed.
-
-.PARAMETER SandboxPath
-    Optional workspace path used for ACL cleanup when ProgramData config has
-    already been removed or is unreadable.
+    It deliberately does NOT delete or modify the shared sandbox workspace
+    directory. Delete the workspace manually if it is no longer needed.
 
 .PARAMETER Force
     Skip the interactive confirmation prompt.
 
 .EXAMPLE
     .\Remove-ClaudeSandbox.ps1
-
-.EXAMPLE
-    .\Remove-ClaudeSandbox.ps1 -SandboxPath C:\dev\ClaudeSandbox -Force
 #>
 
 [CmdletBinding(SupportsShouldProcess = $true)]
 param(
-    [string]$SandboxPath,
     [switch]$Force
 )
 
@@ -75,55 +65,6 @@ function Get-ConfiguredSandboxPath {
 
     return $null
 }
-
-function Remove-SandboxWorkspaceAccess {
-    param(
-        [string]$Path,
-        [string]$AccountName,
-        [string]$Sid
-    )
-
-    if ([string]::IsNullOrWhiteSpace($Path)) {
-        Write-Skipped "workspace ACL cleanup (sandbox path unknown)"
-        return
-    }
-
-    if ((Split-Path $Path -Leaf) -ne $SandboxDirectoryName) {
-        Write-Warning "Refusing workspace ACL cleanup because path does not end in '$SandboxDirectoryName': $Path"
-        return
-    }
-
-    if (-not (Test-Path $Path)) {
-        Write-Skipped "workspace ACL cleanup ($Path not found)"
-        return
-    }
-
-    $principals = @($AccountName)
-    if (-not [string]::IsNullOrWhiteSpace($Sid)) {
-        $principals += "*$Sid"
-    }
-    $principals = @($principals | Select-Object -Unique)
-    $removedAny = $false
-
-    foreach ($principal in $principals) {
-        foreach ($removeMode in @('/remove:g', '/remove:d')) {
-            if ($PSCmdlet.ShouldProcess("$Path ACL", "Remove $removeMode entries for $principal")) {
-                & icacls $Path $removeMode $principal | Out-Null
-                if ($LASTEXITCODE -ne 0) {
-                    Write-Warning "icacls returned exit code $LASTEXITCODE while removing $principal from $Path"
-                }
-                else {
-                    $removedAny = $true
-                }
-            }
-        }
-    }
-
-    if ($removedAny) {
-        Write-Removed "workspace ACL entries for $AccountName from $Path"
-    }
-}
-
 function Remove-SandboxFirewallRules {
     $rules = @(Get-NetFirewallRule -Group $FirewallRuleGroup -ErrorAction SilentlyContinue)
     if ($rules.Count -eq 0) {
@@ -191,17 +132,13 @@ else {
 }
 Write-Host "  ProgramData: $ProgramDataRoot"
 Write-Host "  shortcut: $ShortcutPath"
-if ([string]::IsNullOrWhiteSpace($ResolvedSandboxPath)) {
-    Write-Host "  workspace: unknown (pass -SandboxPath to remove stale ACLs)" -ForegroundColor Yellow
-}
-else {
-    Write-Host "  workspace: $ResolvedSandboxPath (contents will NOT be deleted)" -ForegroundColor Yellow
-}
+Write-Host "  workspace: not modified by this script" -ForegroundColor Yellow
 
 if (-not $Force -and -not $WhatIfPreference) {
     Write-Host ''
     Write-Host 'This removes the sandbox user, its Windows profile, per-user Claude install/settings, ProgramData state, and shortcut.' -ForegroundColor Yellow
-    Write-Host 'The shared workspace directory is left intact for manual review.' -ForegroundColor Yellow
+    Write-Host 'The shared workspace directory and its ACLs are left intact for manual review.' -ForegroundColor Yellow
+    Write-Host ''    
     $answer = Read-Host "Type REMOVE to continue"
     if ($answer -ne 'REMOVE') {
         Write-Host 'Cancelled.' -ForegroundColor Yellow
@@ -209,22 +146,18 @@ if (-not $Force -and -not $WhatIfPreference) {
     }
 }
 
-# --- 1. Remove workspace ACL grant before deleting the user ------------------
-Write-Step "Removing workspace access for '$UserName'"
-Remove-SandboxWorkspaceAccess -Path $ResolvedSandboxPath -AccountName $UserName -Sid $sid
-
-# --- 2. Remove account-scoped hardening artifacts ----------------------------
+# --- 1. Remove account-scoped hardening artifacts ----------------------------
 Write-Step "Removing account-scoped firewall rules"
 Remove-SandboxFirewallRules
 
 Write-Step "Removing login-screen hiding entry"
 Remove-SandboxLoginScreenEntry
 
-# --- 3. Remove optional launcher shortcut ------------------------------------
+# --- 2. Remove optional launcher shortcut ------------------------------------
 Write-Step "Removing optional desktop shortcut"
 Remove-SandboxShortcut
 
-# --- 4. Remove sandbox user profile ------------------------------------------
+# --- 3. Remove sandbox user profile ------------------------------------------
 Write-Step "Removing user profile for '$UserName'"
 if (-not $profile) {
     Write-Skipped "user profile (not found)"
@@ -237,7 +170,7 @@ elseif ($PSCmdlet.ShouldProcess("user profile '$($profile.LocalPath)'", 'Remove'
     Write-Removed "user profile: $($profile.LocalPath)"
 }
 
-# --- 5. Remove the local sandbox user ----------------------------------------
+# --- 4. Remove the local sandbox user ----------------------------------------
 Write-Step "Removing local user '$UserName'"
 if ($user) {
     if ($PSCmdlet.ShouldProcess("local user '$UserName'", 'Remove')) {
@@ -249,7 +182,7 @@ else {
     Write-Skipped "local user '$UserName' (not found)"
 }
 
-# --- 6. Remove generated ProgramData files -----------------------------------
+# --- 5. Remove generated ProgramData files -----------------------------------
 Write-Step "Removing ProgramData sandbox files"
 if (Test-Path $ProgramDataRoot) {
     if ($PSCmdlet.ShouldProcess($ProgramDataRoot, 'Remove generated ProgramData files recursively')) {
@@ -261,20 +194,13 @@ else {
     Write-Skipped "$ProgramDataRoot (not found)"
 }
 
-# --- 7. Done ------------------------------------------------------------------
+# --- 6. Done ------------------------------------------------------------------
 Write-Step "Removal complete"
-$workspaceMessage = if ([string]::IsNullOrWhiteSpace($ResolvedSandboxPath)) {
-    '  (unknown - ProgramData state was missing and -SandboxPath was not provided)'
-}
-else {
-    "  $ResolvedSandboxPath"
-}
 Write-Host @"
-The shared sandbox workspace was not deleted:
+The shared sandbox workspace was not deleted or modified:
 
-$workspaceMessage
+$ResolvedSandboxPath
 
-Delete that directory manually if it is no longer needed. It is a shared space,
-so this script only removes the sandbox user's access grant and leaves contents
-for human review.
+Delete that directory manually if it is no longer needed. It is a shared working
+area, so this script leaves its contents and ACLs for human review.
 "@ -ForegroundColor Cyan

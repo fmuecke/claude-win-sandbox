@@ -47,10 +47,10 @@ shops. This project is for that case.
    - Removes the `ClaudeSandbox` local user and profile, account-scoped firewall
      rules, hidden-login-screen registry value, generated
      `C:\ProgramData\claude-win-sandbox\` files, optional Public Desktop
-     shortcut, and the sandbox user's explicit ACL grant on the configured
-     workspace
-   - Does **not** delete the shared workspace directory. Delete it manually only
-     after reviewing that it contains nothing you still need.
+     shortcut
+   - Does **not** delete or modify the shared workspace directory or its ACLs.
+     Delete it manually only after reviewing that it contains nothing you still
+     need.
 
 4. **`Start-ClaudeSandbox.ps1`** (run per session, normal priv)
    - Prompts for the `ClaudeSandbox` password (via `runas`)
@@ -114,6 +114,7 @@ After running setup, start a sandboxed shell and install as `ClaudeSandbox`:
 
 ```powershell
 .\Start-ClaudeSandbox.ps1
+
 # in the new window (running as ClaudeSandbox):
 irm https://claude.ai/install.ps1 | iex
 ```
@@ -169,20 +170,12 @@ Run the removal script from an elevated PowerShell session:
 
 The script removes the local sandbox account, its Windows profile including the
 per-user Claude install/settings, generated `C:\ProgramData\claude-win-sandbox\`
-state, account-scoped firewall rules, optional Public Desktop shortcut, and the
-`ClaudeSandbox` ACL grant on the configured workspace.
+state, account-scoped firewall rules, and optional Public Desktop shortcut.
 
-It does **not** delete the workspace directory, for example
+It does **not** delete or modify the workspace directory or its ACLs, for example
 `C:\dev\ClaudeSandbox`. That folder is a shared working area and may contain
 repositories or files you still need. Delete it manually after review if it is no
 longer needed.
-
-If ProgramData state has already been removed, pass the workspace explicitly so
-the script can still remove the stale ACL grant:
-
-```powershell
-.\Remove-ClaudeSandbox.ps1 -SandboxPath C:\dev\ClaudeSandbox
-```
 
 
 ## Credential handling
