@@ -36,7 +36,7 @@ shops. This project is for that case.
      Developer Shell + git, copies the Dev Shell bootstrap into
      `C:\ProgramData\claude-win-sandbox\bootstrap\`, and locks those ProgramData
      artifacts admin-write / Users-RX
-   - Can create a desktop shortcut that launches the sandbox
+   - Can create a Public Desktop shortcut that launches the sandbox
 
 2. **`managed-settings.json`** (copy once, elevated)
    - Enterprise Claude Code policy: denies obvious secret reads, disables
@@ -44,9 +44,10 @@ shops. This project is for that case.
    - Copy to `C:\ProgramData\ClaudeCode\` and lock it (see setup below)
 
 3. **`Remove-ClaudeSandbox.ps1`** (run for teardown, elevated)
-   - Removes the `ClaudeSandbox` local user, account-scoped firewall rules,
-     hidden-login-screen registry value, generated `C:\ProgramData\claude-win-sandbox\`
-     files, and the sandbox user's explicit ACL grant on the configured
+   - Removes the `ClaudeSandbox` local user and profile, account-scoped firewall
+     rules, hidden-login-screen registry value, generated
+     `C:\ProgramData\claude-win-sandbox\` files, optional Public Desktop
+     shortcut, and the sandbox user's explicit ACL grant on the configured
      workspace
    - Does **not** delete the shared workspace directory. Delete it manually only
      after reviewing that it contains nothing you still need.
@@ -166,9 +167,10 @@ Run the removal script from an elevated PowerShell session:
 .\Remove-ClaudeSandbox.ps1
 ```
 
-The script removes the local sandbox account, generated
-`C:\ProgramData\claude-win-sandbox\` state, account-scoped firewall rules,
-and the `ClaudeSandbox` ACL grant on the configured workspace.
+The script removes the local sandbox account, its Windows profile including the
+per-user Claude install/settings, generated `C:\ProgramData\claude-win-sandbox\`
+state, account-scoped firewall rules, optional Public Desktop shortcut, and the
+`ClaudeSandbox` ACL grant on the configured workspace.
 
 It does **not** delete the workspace directory, for example
 `C:\dev\ClaudeSandbox`. That folder is a shared working area and may contain

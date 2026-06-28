@@ -6,9 +6,10 @@
 
 .DESCRIPTION
     This is the teardown counterpart to Setup-ClaudeSandbox.ps1. It removes the
-    fixed ClaudeSandbox local user, account-scoped firewall rules, the
-    hidden-login-screen registry value, and the generated ProgramData files under
-    C:\ProgramData\claude-win-sandbox.
+    fixed ClaudeSandbox local user, that user's Windows profile, account-scoped
+    firewall rules, the hidden-login-screen registry value, generated
+    ProgramData files under C:\ProgramData\claude-win-sandbox, and the optional
+    Public Desktop shortcut.
 
     It deliberately does NOT delete the shared sandbox workspace directory. The
     script removes the ClaudeSandbox ACL grant from that directory when it can
@@ -42,6 +43,7 @@ $SandboxDirectoryName = 'ClaudeSandbox'   # baked in; not configurable
 $ProgramDataRoot = 'C:\ProgramData\claude-win-sandbox'    # baked in; not configurable
 $ConfigFile = Join-Path $ProgramDataRoot 'config.json'
 $SetupMarkerFile = Join-Path $ProgramDataRoot 'setup-marker.json'
+$ShortcutPath = Join-Path (Join-Path $env:PUBLIC 'Desktop') 'Claude (sandboxed).lnk'
 $FirewallRuleGroup = 'claude-win-sandbox'
 
 function Write-Step { param($m) Write-Host "`n==> $m" -ForegroundColor Cyan }
@@ -156,14 +158,39 @@ function Remove-SandboxLoginScreenEntry {
     }
 }
 
+function Remove-SandboxShortcut {
+    if (-not (Test-Path $ShortcutPath)) {
+        Write-Skipped "desktop shortcut ($ShortcutPath not found)"
+        return
+    }
+
+    if ($PSCmdlet.ShouldProcess($ShortcutPath, 'Remove desktop shortcut')) {
+        Remove-Item -LiteralPath $ShortcutPath -Force
+        Write-Removed "desktop shortcut: $ShortcutPath"
+    }
+}
+
 # --- 0. Resolve current state -------------------------------------------------
 $ResolvedSandboxPath = Get-ConfiguredSandboxPath -FallbackPath $SandboxPath
 $user = Get-LocalUser -Name $UserName -ErrorAction SilentlyContinue
 $sid = if ($user) { $user.SID.Value } else { $null }
+$profile = if ($sid) {
+    Get-CimInstance -ClassName Win32_UserProfile -Filter "SID='$sid'" -ErrorAction SilentlyContinue
+}
+else {
+    $null
+}
 
 Write-Step "Removal target summary"
 Write-Host "  user: $UserName"
+if ($profile) {
+    Write-Host "  profile: $($profile.LocalPath)"
+}
+else {
+    Write-Host "  profile: not found" -ForegroundColor Yellow
+}
 Write-Host "  ProgramData: $ProgramDataRoot"
+Write-Host "  shortcut: $ShortcutPath"
 if ([string]::IsNullOrWhiteSpace($ResolvedSandboxPath)) {
     Write-Host "  workspace: unknown (pass -SandboxPath to remove stale ACLs)" -ForegroundColor Yellow
 }
@@ -173,7 +200,8 @@ else {
 
 if (-not $Force -and -not $WhatIfPreference) {
     Write-Host ''
-    Write-Host 'This removes the sandbox user and ProgramData state, but leaves the shared workspace directory intact.' -ForegroundColor Yellow
+    Write-Host 'This removes the sandbox user, its Windows profile, per-user Claude install/settings, ProgramData state, and shortcut.' -ForegroundColor Yellow
+    Write-Host 'The shared workspace directory is left intact for manual review.' -ForegroundColor Yellow
     $answer = Read-Host "Type REMOVE to continue"
     if ($answer -ne 'REMOVE') {
         Write-Host 'Cancelled.' -ForegroundColor Yellow
@@ -192,7 +220,24 @@ Remove-SandboxFirewallRules
 Write-Step "Removing login-screen hiding entry"
 Remove-SandboxLoginScreenEntry
 
-# --- 3. Remove the local sandbox user ----------------------------------------
+# --- 3. Remove optional launcher shortcut ------------------------------------
+Write-Step "Removing optional desktop shortcut"
+Remove-SandboxShortcut
+
+# --- 4. Remove sandbox user profile ------------------------------------------
+Write-Step "Removing user profile for '$UserName'"
+if (-not $profile) {
+    Write-Skipped "user profile (not found)"
+}
+elseif ($profile.Loaded) {
+    Write-Warning "Skipping user profile removal because it is currently loaded: $($profile.LocalPath)"
+}
+elseif ($PSCmdlet.ShouldProcess("user profile '$($profile.LocalPath)'", 'Remove')) {
+    $profile | Remove-CimInstance
+    Write-Removed "user profile: $($profile.LocalPath)"
+}
+
+# --- 5. Remove the local sandbox user ----------------------------------------
 Write-Step "Removing local user '$UserName'"
 if ($user) {
     if ($PSCmdlet.ShouldProcess("local user '$UserName'", 'Remove')) {
@@ -204,7 +249,7 @@ else {
     Write-Skipped "local user '$UserName' (not found)"
 }
 
-# --- 4. Remove generated ProgramData files -----------------------------------
+# --- 6. Remove generated ProgramData files -----------------------------------
 Write-Step "Removing ProgramData sandbox files"
 if (Test-Path $ProgramDataRoot) {
     if ($PSCmdlet.ShouldProcess($ProgramDataRoot, 'Remove generated ProgramData files recursively')) {
@@ -216,7 +261,7 @@ else {
     Write-Skipped "$ProgramDataRoot (not found)"
 }
 
-# --- 5. Done ------------------------------------------------------------------
+# --- 7. Done ------------------------------------------------------------------
 Write-Step "Removal complete"
 $workspaceMessage = if ([string]::IsNullOrWhiteSpace($ResolvedSandboxPath)) {
     '  (unknown - ProgramData state was missing and -SandboxPath was not provided)'

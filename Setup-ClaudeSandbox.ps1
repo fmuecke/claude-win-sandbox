@@ -38,29 +38,30 @@ $ConfigFile = Join-Path $ProgramDataRoot 'config.json'
 $SetupMarkerFile = Join-Path $ProgramDataRoot 'setup-marker.json'
 $BootstrapSource = Join-Path $PSScriptRoot 'bootstrap\Enter-ClaudeDevShell.ps1'
 $BootstrapScript = 'C:\ProgramData\claude-win-sandbox\bootstrap\Enter-ClaudeDevShell.ps1'    # baked in; not configurable
+$ShortcutPath = Join-Path (Join-Path $env:PUBLIC 'Desktop') 'Claude (sandboxed).lnk'
 $FirewallMode = 'BlockWindowsLanProtocols'
 $FirewallRuleGroup = 'claude-win-sandbox'
 $FirewallRules = @(
     [pscustomobject]@{
-        Name = 'claude_win_sandbox_block_smb_netbios_tcp'
+        Name        = 'claude_win_sandbox_block_smb_netbios_tcp'
         DisplayName = 'Claude Sandbox - Block SMB and NetBIOS TCP'
         Description = 'Blocks ClaudeSandbox outbound SMB and NetBIOS session traffic while leaving web traffic available.'
-        Protocol = 'TCP'
-        RemotePort = @('139', '445')
+        Protocol    = 'TCP'
+        RemotePort  = @('139', '445')
     },
     [pscustomobject]@{
-        Name = 'claude_win_sandbox_block_netbios_udp'
+        Name        = 'claude_win_sandbox_block_netbios_udp'
         DisplayName = 'Claude Sandbox - Block NetBIOS UDP'
         Description = 'Blocks ClaudeSandbox outbound NetBIOS name and datagram traffic while leaving web traffic available.'
-        Protocol = 'UDP'
-        RemotePort = @('137', '138')
+        Protocol    = 'UDP'
+        RemotePort  = @('137', '138')
     },
     [pscustomobject]@{
-        Name = 'claude_win_sandbox_block_remote_admin_tcp'
+        Name        = 'claude_win_sandbox_block_remote_admin_tcp'
         DisplayName = 'Claude Sandbox - Block remote admin TCP'
         Description = 'Blocks ClaudeSandbox outbound RPC endpoint mapper, RDP, and WinRM traffic while leaving web traffic available.'
-        Protocol = 'TCP'
-        RemotePort = @('135', '3389', '5985', '5986')
+        Protocol    = 'TCP'
+        RemotePort  = @('135', '3389', '5985', '5986')
     }
 )
 
@@ -68,7 +69,7 @@ $FirewallRules = @(
 function Write-Step { param($m) Write-Host "`n==> $m" -ForegroundColor Cyan }
 function Get-LocalUserFirewallSddl {
     param([string]$Sid)
-    return "O:LSD:(A;;CC;;;$Sid)"
+    return "D:(A;;CC;;;$Sid)"
 }
 function Read-SandboxPassword {
     param([string]$AccountName)
@@ -112,45 +113,26 @@ function Set-SandboxFirewallRule {
     )
 
     $rule = Get-NetFirewallRule -Name $RuleSpec.Name -ErrorAction SilentlyContinue
-    if (-not $rule) {
-        New-NetFirewallRule `
-            -Name $RuleSpec.Name `
-            -DisplayName $RuleSpec.DisplayName `
-            -Description $RuleSpec.Description `
-            -Group $Group `
-            -Enabled True `
-            -Profile Any `
-            -Direction Outbound `
-            -Action Block `
-            -Protocol $RuleSpec.Protocol `
-            -RemotePort $RuleSpec.RemotePort `
-            -LocalUser $LocalUserSddl | Out-Null
-        Write-Host "  created firewall rule: $($RuleSpec.DisplayName)" -ForegroundColor Green
-        return
+    if ($rule) {
+        $rule | Remove-NetFirewallRule
+        Write-Host "  removed existing firewall rule: $($RuleSpec.DisplayName)" -ForegroundColor Yellow
     }
 
-    Set-NetFirewallRule `
-        -InputObject $rule `
+    New-NetFirewallRule `
+        -Name $RuleSpec.Name `
         -DisplayName $RuleSpec.DisplayName `
         -Description $RuleSpec.Description `
         -Group $Group `
         -Enabled True `
         -Profile Any `
         -Direction Outbound `
-        -Action Block | Out-Null
+        -Action Block `
+        -Protocol $RuleSpec.Protocol `
+        -RemotePort $RuleSpec.RemotePort `
+        -LocalUser $LocalUserSddl | Out-Null
 
-    Get-NetFirewallPortFilter -AssociatedNetFirewallRule $rule |
-    Set-NetFirewallPortFilter -Protocol $RuleSpec.Protocol -LocalPort Any -RemotePort $RuleSpec.RemotePort | Out-Null
-
-    Get-NetFirewallAddressFilter -AssociatedNetFirewallRule $rule |
-    Set-NetFirewallAddressFilter -LocalAddress Any -RemoteAddress Any | Out-Null
-
-    Get-NetFirewallSecurityFilter -AssociatedNetFirewallRule $rule |
-    Set-NetFirewallSecurityFilter -LocalUser $LocalUserSddl | Out-Null
-
-    Write-Host "  updated firewall rule: $($RuleSpec.DisplayName)" -ForegroundColor Green
+    Write-Host "  created firewall rule: $($RuleSpec.DisplayName)" -ForegroundColor Green
 }
-
 # --- 0. Sanity ----------------------------------------------------------------
 $callingUser = [System.Security.Principal.WindowsIdentity]::GetCurrent().Name  # DOMAIN\user
 $callingProfile = $env:USERPROFILE
@@ -316,14 +298,14 @@ $config | ConvertTo-Json | Set-Content -Path $ConfigFile -Encoding UTF8
 Write-Host "  wrote $ConfigFile" -ForegroundColor Green
 
 $setupMarker = [ordered]@{
-    setupVersion = $SetupVersion
-    createdAtUtc = (Get-Date).ToUniversalTime().ToString('o')
-    userName = $UserName
-    sandboxPath = $SandboxPath
-    programDataRoot = $ProgramDataRoot
-    configFile = $ConfigFile
-    bootstrapScript = $BootstrapScript
-    firewallMode = $FirewallMode
+    setupVersion      = $SetupVersion
+    createdAtUtc      = (Get-Date).ToUniversalTime().ToString('o')
+    userName          = $UserName
+    sandboxPath       = $SandboxPath
+    programDataRoot   = $ProgramDataRoot
+    configFile        = $ConfigFile
+    bootstrapScript   = $BootstrapScript
+    firewallMode      = $FirewallMode
     firewallRuleNames = @($FirewallRules | ForEach-Object { $_.Name })
 }
 $setupMarker | ConvertTo-Json | Set-Content -Path $SetupMarkerFile -Encoding UTF8
@@ -358,9 +340,7 @@ else {
     Write-Host "  '$UserName' is denied your profile by default Windows ACLs." -ForegroundColor Green
 }
 
-Write-Warning "Optional hardening note: if you keep secrets OUTSIDE your profile (e.g. a"
-Write-Warning "KeePass vault under C:\, a shared drive), verify those paths separately - the"
-Write-Warning "profile-default protection does not extend to them."
+Write-Warning "Optional hardening note: if you keep secrets OUTSIDE your profile (e.g. a KeePass vault under C:\, a shared drive), verify those paths separately - the profile-default protection does not extend to them."
 
 # --- 5. Verify VS Developer Shell + Git availability for the user ------------
 Write-Step "Locating Visual Studio Developer Shell + Git (machine-wide)"
@@ -428,28 +408,23 @@ else {
         Write-Host "  skipped." -ForegroundColor Yellow
     }
     else {
-        # Calling user's desktop (derived from their profile, not the elevated
-        # process identity) vs. all-users Public desktop.
-        $scope = Read-Host "Place on [c]alling-user desktop or [a]ll-users desktop? [C/a]"
-        if ($scope -match '^(a|all)$') {
-            $desktop = Join-Path $env:PUBLIC 'Desktop'
-        }
-        else {
-            # $callingProfile = the invoking user's profile, captured in section 0.
-            $desktop = Join-Path $callingProfile 'Desktop'
-        }
+        try {
+            $powershellExe = (Get-Command powershell.exe).Source
+            $wsh = New-Object -ComObject WScript.Shell
+            $sc = $wsh.CreateShortcut($ShortcutPath)
+            $sc.TargetPath = $powershellExe
+            $sc.Arguments = "-NoProfile -ExecutionPolicy Bypass -File `"$launcher`""
+            $sc.WorkingDirectory = $SandboxPath
+            $sc.IconLocation = "$powershellExe,0"
+            $sc.Description = 'Launch Claude Code as the low-privilege sandbox user'
+            $sc.Save()
 
-        $lnkPath = Join-Path $desktop 'Claude (sandboxed).lnk'
-        $wsh = New-Object -ComObject WScript.Shell
-        $sc = $wsh.CreateShortcut($lnkPath)
-        $sc.TargetPath = (Get-Command powershell.exe).Source
-        $sc.Arguments = "-NoProfile -ExecutionPolicy Bypass -File `"$launcher`""
-        $sc.WorkingDirectory = $SandboxPath
-        $sc.IconLocation = "$((Get-Command powershell.exe).Source),0"
-        $sc.Description = 'Launch Claude Code as the low-privilege sandbox user'
-        $sc.Save()
-
-        Write-Host "  created $lnkPath" -ForegroundColor Green
+            Write-Host "  created $ShortcutPath" -ForegroundColor Green
+        }
+        catch {
+            Write-Warning "  could not create desktop shortcut: $($_.Exception.Message)"
+            Write-Warning "  setup is otherwise complete; launch with .\Start-ClaudeSandbox.ps1"
+        }
     }
 }
 
@@ -460,16 +435,11 @@ To start a Claude Code session, use the launcher:
 
   .\Start-ClaudeSandbox.ps1
 
-(or directly: runas /user:$UserName "powershell -NoExit -File $BootstrapScript")
+  NOTES:
+  - Keep secrets in your own Windows profile or another location ClaudeSandbox
+    cannot read. Shared folders, drives, and vaults outside your profile need
+    separate review.
+  - ClaudeSandbox has its own Windows Credential Manager and profile. Set up its
+    ADO PAT/git credential separately, scoped minimally.
 
-Notes:
-  - Do NOT use runas /savecred (defeats the boundary).
-  - Install Claude Code AS $UserName (irm https://claude.ai/install.ps1 | iex).
-    A machine-wide or your-profile install can be picked up off the machine PATH
-    and pulls binary/config from OUTSIDE the boundary - keep it per-user here.
-  - ClaudeSandbox has its OWN Windows Credential Manager + profile. Set up its
-    ADO PAT/git credential separately, scoped minimally. Your secrets are not
-    visible to it.
-  - ClaudeSandbox needs a writable home for ~/.claude config (its own profile -
-    fine, contains none of your secrets).
 "@ -ForegroundColor Cyan
