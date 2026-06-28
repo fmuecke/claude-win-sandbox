@@ -6,6 +6,9 @@ Visual Studio Developer Shell, scoped to a fixed workspace directory.
 This is blast-radius reduction for Windows-native development. It is not hard
 containment. Use a VM for adversarial code or strong isolation.
 
+> The CEO's assistant is not the CEO.
+> Give the agent delegated access, not your full Windows identity.
+
 ## Requirements
 
 - Windows 10/11
@@ -87,6 +90,7 @@ for example `C:\dev\ClaudeSandbox`.
 
 - [Extended guide](docs/extended.md)
 - [Threat model](docs/threat-model.md)
+- [Todo and decisions](docs/todo-and-decisions.md)
 - [Codex Windows sandbox notes](docs/codex-sandbox.md)
 
 ## License

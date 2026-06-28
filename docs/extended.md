@@ -80,6 +80,9 @@ native Windows the most practical OS-level boundary is a **separate low-priv
 user**: the NTFS ACLs do the enforcing, and Claude Code physically can't reach
 what that user can't reach.
 
+The CEO's assistant is not the CEO. Treat the agent the same way: give it
+delegated access, not your full Windows identity.
+
 This pairs with — doesn't replace — Claude Code's own permission system and the
 managed-settings deny rules. Defense in depth:
 
