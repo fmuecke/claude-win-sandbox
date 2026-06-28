@@ -35,7 +35,8 @@ if ($me -ne 'ClaudeSandbox') {
     Write-Host 'Launch via Start-ClaudeSandbox.ps1 (which uses runas), not directly.' -ForegroundColor Yellow
     exit 1
 }
-Write-Host "Running as $me" -ForegroundColor Green
+Write-Host "Running as user $me" -ForegroundColor Green
+Write-Host ""
 
 function Write-SandboxNetworkExposureWarning {
     $mappedDrives = @()
@@ -53,9 +54,9 @@ function Write-SandboxNetworkExposureWarning {
             $persistentMappings = @(Get-ChildItem -Path 'HKCU:\Network' -ErrorAction Stop | ForEach-Object {
                     $props = Get-ItemProperty -Path $_.PSPath -ErrorAction Stop
                     [pscustomobject]@{
-                        Drive = "$($_.PSChildName):"
+                        Drive      = "$($_.PSChildName):"
                         RemotePath = [string]$props.RemotePath
-                        UserName = [string]$props.UserName
+                        UserName   = [string]$props.UserName
                     }
                 })
         }
@@ -114,7 +115,10 @@ if (Get-Command claude.exe -ErrorAction SilentlyContinue) {
 }
 else {
     Write-Host "Ready in $SandboxPath, but 'claude' was not found." -ForegroundColor Yellow
+    Write-Host ""
     Write-Host 'Install it AS THIS USER (do not use a machine-wide install):' -ForegroundColor Yellow
     Write-Host '  irm https://claude.ai/install.ps1 | iex' -ForegroundColor Cyan
+    Write-Host ""
     Write-Host "Then reopen this shell - the bootstrap puts $claudeBin on PATH." -ForegroundColor DarkGray
+    Write-Host ""
 }

@@ -297,6 +297,7 @@ $config = [ordered]@{
         setupVersion      = $SetupVersion
         createdAtUtc      = (Get-Date).ToUniversalTime().ToString('o')
         userName          = $UserName
+        installedByUser   = $callingUser
         firewallMode      = $FirewallMode
         firewallRuleNames = @($FirewallRules | ForEach-Object { $_.Name })
     }

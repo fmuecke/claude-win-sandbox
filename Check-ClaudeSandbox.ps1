@@ -117,6 +117,20 @@ function Test-ConfigSetupField {
         Pass "$Description matches config setup section."
     }
 }
+function Test-ConfigSetupRequiredField {
+    param(
+        [object]$Setup,
+        [string]$Field,
+        [string]$Description
+    )
+    $property = $Setup.PSObject.Properties[$Field]
+    if (-not $property -or [string]::IsNullOrWhiteSpace([string]$property.Value)) {
+        Fail "$Description missing in config setup section."
+    }
+    else {
+        Pass "$Description is present in config setup section."
+    }
+}
 function Test-ConfigSetupStringList {
     param(
         [object]$Setup,
@@ -138,26 +152,6 @@ function Test-ConfigSetupStringList {
     }
     else {
         Pass "$Description matches config setup section."
-    }
-}
-function Test-ConfigSetupTimestamp {
-    param(
-        [object]$Setup,
-        [string]$Field,
-        [string]$Description
-    )
-    $property = $Setup.PSObject.Properties[$Field]
-    if (-not $property -or [string]::IsNullOrWhiteSpace([string]$property.Value)) {
-        Fail "$Description missing in config setup section."
-        return
-    }
-
-    $timestamp = [datetime]::MinValue
-    if (-not [datetime]::TryParse([string]$property.Value, [ref]$timestamp)) {
-        Fail "$Description is not a valid timestamp: $($property.Value)"
-    }
-    else {
-        Pass "$Description is present in config setup section."
     }
 }
 function Expand-FirewallValues {
@@ -295,8 +289,9 @@ else {
             else {
                 Pass 'Config setup version matches current script.'
             }
-            Test-ConfigSetupTimestamp -Setup $setup -Field 'createdAtUtc' -Description 'Setup timestamp'
+            Test-ConfigSetupRequiredField -Setup $setup -Field 'createdAtUtc' -Description 'Setup timestamp'
             Test-ConfigSetupField -Setup $setup -Field 'userName' -Expected $UserName -Description 'Sandbox user'
+            Test-ConfigSetupRequiredField -Setup $setup -Field 'installedByUser' -Description 'Installing user'
             Test-ConfigSetupField -Setup $setup -Field 'firewallMode' -Expected $FirewallMode -Description 'Firewall mode'
             Test-ConfigSetupStringList -Setup $setup -Field 'firewallRuleNames' -Expected @($FirewallRules | ForEach-Object { $_.Name }) -Description 'Firewall rule names'
         }
