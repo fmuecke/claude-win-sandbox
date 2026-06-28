@@ -29,10 +29,8 @@ param(
 $ErrorActionPreference = 'Stop'
 
 $UserName = 'ClaudeSandbox'   # baked in; not configurable
-$SandboxDirectoryName = 'ClaudeSandbox'   # baked in; not configurable
 $ProgramDataRoot = 'C:\ProgramData\claude-win-sandbox'    # baked in; not configurable
 $ConfigFile = Join-Path $ProgramDataRoot 'config.json'
-$SetupMarkerFile = Join-Path $ProgramDataRoot 'setup-marker.json'
 $ShortcutPath = Join-Path (Join-Path $env:PUBLIC 'Desktop') 'Claude (sandboxed).lnk'
 $FirewallRuleGroup = 'claude-win-sandbox'
 
@@ -41,30 +39,23 @@ function Write-Removed { param($m) Write-Host "  removed $m" -ForegroundColor Gr
 function Write-Skipped { param($m) Write-Host "  skipped $m" -ForegroundColor Yellow }
 
 function Get-ConfiguredSandboxPath {
-    param([string]$FallbackPath)
-
-    if (-not [string]::IsNullOrWhiteSpace($FallbackPath)) {
-        return $FallbackPath
+    if (-not (Test-Path $ConfigFile)) {
+        return $null
     }
 
-    foreach ($stateFile in @($ConfigFile, $SetupMarkerFile)) {
-        if (-not (Test-Path $stateFile)) {
-            continue
+    try {
+        $config = Get-Content $ConfigFile -Raw | ConvertFrom-Json
+        if (-not [string]::IsNullOrWhiteSpace($config.sandboxPath)) {
+            return [string]$config.sandboxPath
         }
-
-        try {
-            $state = Get-Content $stateFile -Raw | ConvertFrom-Json
-            if (-not [string]::IsNullOrWhiteSpace($state.sandboxPath)) {
-                return [string]$state.sandboxPath
-            }
-        }
-        catch {
-            Write-Warning "Could not read sandbox path from ${stateFile}: $($_.Exception.Message)"
-        }
+    }
+    catch {
+        Write-Warning "Could not read sandbox path from ${ConfigFile}: $($_.Exception.Message)"
     }
 
     return $null
 }
+
 function Remove-SandboxFirewallRules {
     $rules = @(Get-NetFirewallRule -Group $FirewallRuleGroup -ErrorAction SilentlyContinue)
     if ($rules.Count -eq 0) {
@@ -112,7 +103,7 @@ function Remove-SandboxShortcut {
 }
 
 # --- 0. Resolve current state -------------------------------------------------
-$ResolvedSandboxPath = Get-ConfiguredSandboxPath -FallbackPath $SandboxPath
+$ResolvedSandboxPath = Get-ConfiguredSandboxPath
 $user = Get-LocalUser -Name $UserName -ErrorAction SilentlyContinue
 $sid = if ($user) { $user.SID.Value } else { $null }
 $profile = if ($sid) {
@@ -132,13 +123,18 @@ else {
 }
 Write-Host "  ProgramData: $ProgramDataRoot"
 Write-Host "  shortcut: $ShortcutPath"
-Write-Host "  workspace: not modified by this script" -ForegroundColor Yellow
+if ([string]::IsNullOrWhiteSpace($ResolvedSandboxPath)) {
+    Write-Host "  workspace: unknown (not modified by this script)" -ForegroundColor Yellow
+}
+else {
+    Write-Host "  workspace: $ResolvedSandboxPath (not modified by this script)" -ForegroundColor Yellow
+}
 
 if (-not $Force -and -not $WhatIfPreference) {
     Write-Host ''
     Write-Host 'This removes the sandbox user, its Windows profile, per-user Claude install/settings, ProgramData state, and shortcut.' -ForegroundColor Yellow
     Write-Host 'The shared workspace directory and its ACLs are left intact for manual review.' -ForegroundColor Yellow
-    Write-Host ''    
+    Write-Host ''
     $answer = Read-Host "Type REMOVE to continue"
     if ($answer -ne 'REMOVE') {
         Write-Host 'Cancelled.' -ForegroundColor Yellow
@@ -196,11 +192,18 @@ else {
 
 # --- 6. Done ------------------------------------------------------------------
 Write-Step "Removal complete"
+$workspaceMessage = if ([string]::IsNullOrWhiteSpace($ResolvedSandboxPath)) {
+    '  (unknown - config was missing or unreadable before ProgramData cleanup)'
+}
+else {
+    "  $ResolvedSandboxPath"
+}
 Write-Host @"
 The shared sandbox workspace was not deleted or modified:
 
-$ResolvedSandboxPath
+$workspaceMessage
 
 Delete that directory manually if it is no longer needed. It is a shared working
 area, so this script leaves its contents and ACLs for human review.
+
 "@ -ForegroundColor Cyan

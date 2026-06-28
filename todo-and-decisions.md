@@ -55,6 +55,9 @@ _Last updated: 2026-06-28_
 - **Setup regenerates ProgramData artifacts** from the repo source and writes the
   resolved sandbox path to ProgramData config; the project repo remains the
   source of truth for scripts.
+- **Single ProgramData state file.** `config.json` carries the runtime
+  `sandboxPath` plus nested setup metadata (`setupVersion`, timestamp, user, and
+  firewall intent). A separate `setup-marker.json` is unnecessary duplication.
 - **Removal does not clean workspace ACLs.** After the sandbox user and profile
   are deleted, stale workspace ACL cleanup is low-value complexity. The shared
   workspace is deliberately left untouched for manual review or deletion.

@@ -32,8 +32,8 @@ shops. This project is for that case.
      `5985-5986`) while leaving web/HTTPS access available for Claude, git, and
      internal services
    - Writes `C:\ProgramData\claude-win-sandbox\config.json` with the sandbox
-     path and `setup-marker.json` with the setup version/config, locates VS
-     Developer Shell + git, copies the Dev Shell bootstrap into
+     path and setup metadata, locates VS Developer Shell + git, copies the Dev
+     Shell bootstrap into
      `C:\ProgramData\claude-win-sandbox\bootstrap\`, and locks those ProgramData
      artifacts admin-write / Users-RX
    - Can create a Public Desktop shortcut that launches the sandbox

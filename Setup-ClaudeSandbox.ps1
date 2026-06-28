@@ -14,9 +14,9 @@
     - VS + Git are assumed installed machine-wide (default). A Standard user can
       run them already; no extra grants needed for Program Files.
     - DENY ACEs override ALLOW. Review every Deny path before running.
-    - The workspace config, setup marker, and Dev Shell bootstrap are written
-      into ProgramData (Users-traversable by default) and locked admin-write/
-      Users-RX, so ClaudeSandbox can read/run them but not modify them.
+    - The workspace config and Dev Shell bootstrap are written into ProgramData
+      (Users-traversable by default) and locked admin-write/Users-RX, so
+      ClaudeSandbox can read/run them but not modify them.
     - The sandbox username and workspace directory name are baked in
       (ClaudeSandbox); they are not configurable.
     - The workspace base directory is prompted for interactively if not passed.
@@ -35,7 +35,7 @@ $SandboxDirectoryName = 'ClaudeSandbox'   # baked in; not configurable
 $SetupVersion = 2
 $ProgramDataRoot = 'C:\ProgramData\claude-win-sandbox'    # baked in; not configurable
 $ConfigFile = Join-Path $ProgramDataRoot 'config.json'
-$SetupMarkerFile = Join-Path $ProgramDataRoot 'setup-marker.json'
+$LegacySetupMarkerFile = Join-Path $ProgramDataRoot 'setup-marker.json'
 $BootstrapSource = Join-Path $PSScriptRoot 'bootstrap\Enter-ClaudeDevShell.ps1'
 $BootstrapScript = 'C:\ProgramData\claude-win-sandbox\bootstrap\Enter-ClaudeDevShell.ps1'    # baked in; not configurable
 $ShortcutPath = Join-Path (Join-Path $env:PUBLIC 'Desktop') 'Claude (sandboxed).lnk'
@@ -289,27 +289,24 @@ Write-Host "  granted Modify to $callingUser and $UserName" -ForegroundColor Gre
 # --- 3. Write ProgramData configuration --------------------------------------
 # ProgramData config is the single source of truth for the sandbox path.
 # ClaudeSandbox can read it at launch but cannot alter where the bootstrap lands.
-Write-Step "Writing sandbox configuration and setup marker to ProgramData"
+Write-Step "Writing sandbox configuration to ProgramData"
 if (-not (Test-Path $ProgramDataRoot)) { New-Item -ItemType Directory -Path $ProgramDataRoot -Force | Out-Null }
 $config = [ordered]@{
     sandboxPath = $SandboxPath
+    setup = [ordered]@{
+        setupVersion      = $SetupVersion
+        createdAtUtc      = (Get-Date).ToUniversalTime().ToString('o')
+        userName          = $UserName
+        firewallMode      = $FirewallMode
+        firewallRuleNames = @($FirewallRules | ForEach-Object { $_.Name })
+    }
 }
-$config | ConvertTo-Json | Set-Content -Path $ConfigFile -Encoding UTF8
+$config | ConvertTo-Json -Depth 4 | Set-Content -Path $ConfigFile -Encoding UTF8
 Write-Host "  wrote $ConfigFile" -ForegroundColor Green
-
-$setupMarker = [ordered]@{
-    setupVersion      = $SetupVersion
-    createdAtUtc      = (Get-Date).ToUniversalTime().ToString('o')
-    userName          = $UserName
-    sandboxPath       = $SandboxPath
-    programDataRoot   = $ProgramDataRoot
-    configFile        = $ConfigFile
-    bootstrapScript   = $BootstrapScript
-    firewallMode      = $FirewallMode
-    firewallRuleNames = @($FirewallRules | ForEach-Object { $_.Name })
+if (Test-Path $LegacySetupMarkerFile) {
+    Remove-Item -LiteralPath $LegacySetupMarkerFile -Force
+    Write-Host "  removed legacy $LegacySetupMarkerFile" -ForegroundColor Green
 }
-$setupMarker | ConvertTo-Json | Set-Content -Path $SetupMarkerFile -Encoding UTF8
-Write-Host "  wrote $SetupMarkerFile" -ForegroundColor Green
 
 # --- 4. Verify the calling user's profile is not world/Users-readable --------
 # On a standard Windows config, C:\Users\<you> is accessible only to that user,

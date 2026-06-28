@@ -16,9 +16,6 @@
 .PARAMETER ConfigFile
     claude-win-sandbox ProgramData config file.
 
-.PARAMETER SetupMarkerFile
-    Versioned setup marker written by Setup-ClaudeSandbox.ps1.
-
 .EXAMPLE
     .\Check-ClaudeSandbox.ps1
     Runs all checks and prints a PASS/WARN/FAIL summary.
@@ -35,8 +32,7 @@ param(
     [string]$UserName = 'ClaudeSandbox',
     [string]$BootstrapScript = 'C:\ProgramData\claude-win-sandbox\bootstrap\Enter-ClaudeDevShell.ps1',
     [string]$ManagedSettings = 'C:\ProgramData\ClaudeCode\managed-settings.json',
-    [string]$ConfigFile = 'C:\ProgramData\claude-win-sandbox\config.json',
-    [string]$SetupMarkerFile = 'C:\ProgramData\claude-win-sandbox\setup-marker.json'
+    [string]$ConfigFile = 'C:\ProgramData\claude-win-sandbox\config.json'
 )
 
 $SetupVersion = 2
@@ -102,35 +98,35 @@ function Test-ProgramDataLock {
         Pass "$Description is admin-write-only."
     }
 }
-function Test-MarkerField {
+function Test-ConfigSetupField {
     param(
-        [object]$Marker,
+        [object]$Setup,
         [string]$Field,
         [string]$Expected,
         [string]$Description
     )
-    $property = $Marker.PSObject.Properties[$Field]
+    $property = $Setup.PSObject.Properties[$Field]
     if (-not $property -or [string]::IsNullOrWhiteSpace([string]$property.Value)) {
-        Fail "$Description missing in setup marker."
+        Fail "$Description missing in config setup section."
         return
     }
     if ([string]$property.Value -ine $Expected) {
-        Fail "$Description drift: marker '$($property.Value)', expected '$Expected'."
+        Fail "$Description drift: config '$($property.Value)', expected '$Expected'."
     }
     else {
-        Pass "$Description matches setup marker."
+        Pass "$Description matches config setup section."
     }
 }
-function Test-MarkerStringList {
+function Test-ConfigSetupStringList {
     param(
-        [object]$Marker,
+        [object]$Setup,
         [string]$Field,
         [string[]]$Expected,
         [string]$Description
     )
-    $property = $Marker.PSObject.Properties[$Field]
+    $property = $Setup.PSObject.Properties[$Field]
     if (-not $property) {
-        Fail "$Description missing in setup marker."
+        Fail "$Description missing in config setup section."
         return
     }
 
@@ -138,10 +134,30 @@ function Test-MarkerStringList {
     $expectedSorted = @($Expected) | ForEach-Object { [string]$_ } | Sort-Object
     $delta = Compare-Object -ReferenceObject $expectedSorted -DifferenceObject $actual
     if ($delta) {
-        Fail "$Description drift: marker '$($actual -join ', ')', expected '$($expectedSorted -join ', ')'."
+        Fail "$Description drift: config '$($actual -join ', ')', expected '$($expectedSorted -join ', ')'."
     }
     else {
-        Pass "$Description matches setup marker."
+        Pass "$Description matches config setup section."
+    }
+}
+function Test-ConfigSetupTimestamp {
+    param(
+        [object]$Setup,
+        [string]$Field,
+        [string]$Description
+    )
+    $property = $Setup.PSObject.Properties[$Field]
+    if (-not $property -or [string]::IsNullOrWhiteSpace([string]$property.Value)) {
+        Fail "$Description missing in config setup section."
+        return
+    }
+
+    $timestamp = [datetime]::MinValue
+    if (-not [datetime]::TryParse([string]$property.Value, [ref]$timestamp)) {
+        Fail "$Description is not a valid timestamp: $($property.Value)"
+    }
+    else {
+        Pass "$Description is present in config setup section."
     }
 }
 function Expand-FirewallValues {
@@ -266,6 +282,24 @@ else {
         else {
             Pass "Configured sandbox path: $SandboxPath"
         }
+
+        $setupProperty = $config.PSObject.Properties['setup']
+        $setup = if ($setupProperty) { $setupProperty.Value } else { $null }
+        if (-not $setup) {
+            Fail 'Config does not define setup metadata. Run setup with the current script.'
+        }
+        else {
+            if ($setup.setupVersion -ne $SetupVersion) {
+                Fail "Config setup version drift: config '$($setup.setupVersion)', expected '$SetupVersion'."
+            }
+            else {
+                Pass 'Config setup version matches current script.'
+            }
+            Test-ConfigSetupTimestamp -Setup $setup -Field 'createdAtUtc' -Description 'Setup timestamp'
+            Test-ConfigSetupField -Setup $setup -Field 'userName' -Expected $UserName -Description 'Sandbox user'
+            Test-ConfigSetupField -Setup $setup -Field 'firewallMode' -Expected $FirewallMode -Description 'Firewall mode'
+            Test-ConfigSetupStringList -Setup $setup -Field 'firewallRuleNames' -Expected @($FirewallRules | ForEach-Object { $_.Name }) -Description 'Firewall rule names'
+        }
     }
     catch {
         Fail "Config file is not valid JSON: $($_.Exception.Message)"
@@ -281,32 +315,6 @@ else {
         exit 1
     }
 
-    if (-not (Test-Path $SetupMarkerFile)) {
-        Fail "Setup marker missing: $SetupMarkerFile - run setup with the current script."
-    }
-    else {
-        Pass "Setup marker present: $SetupMarkerFile"
-        try {
-            $marker = Get-Content $SetupMarkerFile -Raw | ConvertFrom-Json
-            if ($marker.setupVersion -ne $SetupVersion) {
-                Fail "Setup marker version drift: marker '$($marker.setupVersion)', expected '$SetupVersion'."
-            }
-            else {
-                Pass "Setup marker version matches current script."
-            }
-            Test-MarkerField -Marker $marker -Field 'userName' -Expected $UserName -Description 'Sandbox user'
-            Test-MarkerField -Marker $marker -Field 'sandboxPath' -Expected $SandboxPath -Description 'Sandbox path'
-            Test-MarkerField -Marker $marker -Field 'programDataRoot' -Expected $programDataRoot -Description 'ProgramData root'
-            Test-MarkerField -Marker $marker -Field 'configFile' -Expected $ConfigFile -Description 'Config path'
-            Test-MarkerField -Marker $marker -Field 'bootstrapScript' -Expected $BootstrapScript -Description 'Bootstrap path'
-            Test-MarkerField -Marker $marker -Field 'firewallMode' -Expected $FirewallMode -Description 'Firewall mode'
-            Test-MarkerStringList -Marker $marker -Field 'firewallRuleNames' -Expected @($FirewallRules | ForEach-Object { $_.Name }) -Description 'Firewall rule names'
-        }
-        catch {
-            Fail "Setup marker is not valid JSON: $($_.Exception.Message)"
-        }
-        Test-ProgramDataLock -Path $SetupMarkerFile -Description 'Setup marker file' -UserName $UserName
-    }
 }
 
 # --- 1. User exists and is not admin -----------------------------------------
