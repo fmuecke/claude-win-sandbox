@@ -6,9 +6,9 @@
 
 .DESCRIPTION
     This is the teardown counterpart to Setup-ClaudeSandbox.ps1. It removes the
-    fixed ClaudeSandbox local user, account-scoped firewall rules, account logon
-    hardening entries, the hidden-login-screen registry value, and the generated
-    ProgramData files under C:\ProgramData\claude-win-sandbox.
+    fixed ClaudeSandbox local user, account-scoped firewall rules, the
+    hidden-login-screen registry value, and the generated ProgramData files under
+    C:\ProgramData\claude-win-sandbox.
 
     It deliberately does NOT delete the shared sandbox workspace directory. The
     script removes the ClaudeSandbox ACL grant from that directory when it can
@@ -43,11 +43,6 @@ $ProgramDataRoot = 'C:\ProgramData\claude-win-sandbox'    # baked in; not config
 $ConfigFile = Join-Path $ProgramDataRoot 'config.json'
 $SetupMarkerFile = Join-Path $ProgramDataRoot 'setup-marker.json'
 $FirewallRuleGroup = 'claude-win-sandbox'
-$FirewallRuleNames = @(
-    'claude_win_sandbox_block_smb_netbios_tcp',
-    'claude_win_sandbox_block_netbios_udp',
-    'claude_win_sandbox_block_remote_admin_tcp'
-)
 
 function Write-Step { param($m) Write-Host "`n==> $m" -ForegroundColor Cyan }
 function Write-Removed { param($m) Write-Host "  removed $m" -ForegroundColor Green }
@@ -77,88 +72,6 @@ function Get-ConfiguredSandboxPath {
     }
 
     return $null
-}
-
-function Remove-PrincipalFromRight {
-    param(
-        [string[]]$Lines,
-        [string]$Right,
-        [string]$Sid,
-        [string]$AccountName
-    )
-
-    $result = New-Object System.Collections.Generic.List[string]
-    $rightPattern = "^\s*$([regex]::Escape($Right))\s*="
-
-    foreach ($line in $Lines) {
-        if ($line -notmatch $rightPattern) {
-            $result.Add($line)
-            continue
-        }
-
-        $value = ($line -split '=', 2)[1]
-        $kept = @()
-        foreach ($entry in ($value -split ',')) {
-            $token = $entry.Trim()
-            if ([string]::IsNullOrWhiteSpace($token)) {
-                continue
-            }
-
-            $isSidMatch = -not [string]::IsNullOrWhiteSpace($Sid) -and (
-                $token -eq "*$Sid" -or
-                $token -eq $Sid
-            )
-            $isNameMatch = (
-                $token -eq $AccountName -or
-                $token -match "\\$([regex]::Escape($AccountName))$"
-            )
-
-            if (-not ($isSidMatch -or $isNameMatch)) {
-                $kept += $token
-            }
-        }
-
-        if ($kept.Count -gt 0) {
-            $result.Add("$Right = $($kept -join ',')")
-        }
-    }
-
-    return $result.ToArray()
-}
-
-function Remove-SandboxUserRights {
-    param(
-        [string]$Sid,
-        [string]$AccountName
-    )
-
-    $tmpBase = Join-Path $env:TEMP "claude_sandbox_remove_secpol_$([guid]::NewGuid().ToString('N'))"
-    $inf = "$tmpBase.inf"
-    $sdb = "$tmpBase.sdb"
-
-    try {
-        secedit /export /cfg $inf /quiet | Out-Null
-        $content = Get-Content $inf
-        $updated = Remove-PrincipalFromRight -Lines $content -Right 'SeDenyNetworkLogonRight' -Sid $Sid -AccountName $AccountName
-        $updated = Remove-PrincipalFromRight -Lines $updated -Right 'SeDenyRemoteInteractiveLogonRight' -Sid $Sid -AccountName $AccountName
-
-        if (($content -join "`n") -eq ($updated -join "`n")) {
-            Write-Skipped "user-rights cleanup (no entries found)"
-            return
-        }
-
-        if ($PSCmdlet.ShouldProcess('local security policy', "Remove deny-logon rights for $AccountName")) {
-            Set-Content -Path $inf -Value $updated -Encoding Unicode
-            secedit /configure /db $sdb /cfg $inf /areas USER_RIGHTS /quiet | Out-Null
-            Write-Removed "deny-logon rights for $AccountName"
-        }
-    }
-    catch {
-        Write-Warning "Could not clean local security policy entries: $($_.Exception.Message)"
-    }
-    finally {
-        Remove-Item $inf, $sdb -ErrorAction SilentlyContinue
-    }
 }
 
 function Remove-SandboxWorkspaceAccess {
@@ -210,21 +123,7 @@ function Remove-SandboxWorkspaceAccess {
 }
 
 function Remove-SandboxFirewallRules {
-    $rules = @()
-
-    foreach ($ruleName in $FirewallRuleNames) {
-        $rule = Get-NetFirewallRule -Name $ruleName -ErrorAction SilentlyContinue
-        if ($rule) {
-            $rules += $rule
-        }
-    }
-
-    $groupRules = @(Get-NetFirewallRule -Group $FirewallRuleGroup -ErrorAction SilentlyContinue)
-    if ($groupRules) {
-        $rules += $groupRules
-    }
-
-    $rules = @($rules | Sort-Object -Property Name -Unique)
+    $rules = @(Get-NetFirewallRule -Group $FirewallRuleGroup -ErrorAction SilentlyContinue)
     if ($rules.Count -eq 0) {
         Write-Skipped "firewall rules (none found)"
         return
@@ -289,9 +188,6 @@ Remove-SandboxWorkspaceAccess -Path $ResolvedSandboxPath -AccountName $UserName 
 # --- 2. Remove account-scoped hardening artifacts ----------------------------
 Write-Step "Removing account-scoped firewall rules"
 Remove-SandboxFirewallRules
-
-Write-Step "Removing local security policy entries"
-Remove-SandboxUserRights -Sid $sid -AccountName $UserName
 
 Write-Step "Removing login-screen hiding entry"
 Remove-SandboxLoginScreenEntry

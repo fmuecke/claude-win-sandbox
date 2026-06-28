@@ -4,10 +4,11 @@
 
 This repository contains a small Windows PowerShell toolset for running Claude Code as a low-privilege local user.
 
-- `Setup-ClaudeSandbox.ps1`: one-time elevated provisioning for the `ClaudeSandbox` user, ACLs, hardening, and bootstrap generation.
-- `Remove-ClaudeSandbox.ps1`: elevated teardown for the `ClaudeSandbox` user, sandbox ACL grants, firewall/user-rights hardening, and generated ProgramData state.
+- `Setup-ClaudeSandbox.ps1`: one-time elevated provisioning for the `ClaudeSandbox` user, ACLs, hardening, and bootstrap installation.
+- `Remove-ClaudeSandbox.ps1`: elevated teardown for the `ClaudeSandbox` user, sandbox ACL grants, firewall rules, login-screen registry value, and generated ProgramData state.
 - `Start-ClaudeSandbox.ps1`: normal day-to-day launcher using `runas`.
 - `Check-ClaudeSandbox.ps1`: read-only verifier for account state, ACLs, bootstrap, policy, and toolchain assumptions.
+- `bootstrap/`: source bootstrap scripts copied into locked ProgramData by setup.
 - `managed-settings.json`: Claude Code enterprise policy intended for `C:\ProgramData\ClaudeCode\`.
 - `README.md`: user-facing setup and threat-model documentation.
 - `discovery/`: research notes and design background. Do not treat these as executable source.
@@ -20,6 +21,7 @@ There is no build step. Validate script changes with parser checks before commit
 $errors=$null; [System.Management.Automation.Language.Parser]::ParseFile((Resolve-Path .\Setup-ClaudeSandbox.ps1), [ref]$null, [ref]$errors); $errors
 $errors=$null; [System.Management.Automation.Language.Parser]::ParseFile((Resolve-Path .\Remove-ClaudeSandbox.ps1), [ref]$null, [ref]$errors); $errors
 $errors=$null; [System.Management.Automation.Language.Parser]::ParseFile((Resolve-Path .\Start-ClaudeSandbox.ps1), [ref]$null, [ref]$errors); $errors
+$errors=$null; [System.Management.Automation.Language.Parser]::ParseFile((Resolve-Path .\bootstrap\Enter-ClaudeDevShell.ps1), [ref]$null, [ref]$errors); $errors
 git diff --check
 ```
 
@@ -35,7 +37,7 @@ Keep implementations simple and maintainable. Aim for working, easy-to-review co
 
 ## Testing Guidelines
 
-Avoid executing provisioning or teardown paths casually: `Setup-ClaudeSandbox.ps1` changes local users, ACLs, registry values, and security policy; `Remove-ClaudeSandbox.ps1` removes the sandbox user and generated ProgramData state. For review, prefer parser checks, `git diff --check`, and close inspection of generated script strings. Test real setup/removal changes on a disposable Windows VM or dedicated dev machine.
+Avoid executing provisioning or teardown paths casually: `Setup-ClaudeSandbox.ps1` changes local users, ACLs, registry values, and security policy; `Remove-ClaudeSandbox.ps1` removes the sandbox user and generated ProgramData state. For review, prefer parser checks, `git diff --check`, and close inspection of script contents. Test real setup/removal changes on a disposable Windows VM or dedicated dev machine.
 
 ## Commit & Pull Request Guidelines
 

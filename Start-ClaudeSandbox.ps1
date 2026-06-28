@@ -13,15 +13,6 @@
     (Start-Process -Credential can produce a window that renders but won't accept
     typing - the "hung shell".) runas prompts for the password natively.
 
-.PARAMETER UserName
-    The low-privilege user to run as. Default: ClaudeSandbox.
-
-.PARAMETER BootstrapScript
-    Dev Shell bootstrap written by Setup-ClaudeSandbox.ps1.
-
-.PARAMETER ConfigFile
-    ProgramData config written by Setup-ClaudeSandbox.ps1.
-
 .EXAMPLE
     .\Start-ClaudeSandbox.ps1
     Prompts for the password, launches a sandboxed Dev Shell in the workspace
@@ -29,13 +20,13 @@
 #>
 
 [CmdletBinding()]
-param(
-    [string]$UserName = 'ClaudeSandbox',
-    [string]$BootstrapScript = 'C:\ProgramData\claude-win-sandbox\bootstrap\Enter-ClaudeDevShell.ps1',
-    [string]$ConfigFile = 'C:\ProgramData\claude-win-sandbox\config.json'
-)
+param()
 
 $ErrorActionPreference = 'Stop'
+
+$UserName = 'ClaudeSandbox'
+$BootstrapScript = 'C:\ProgramData\claude-win-sandbox\bootstrap\Enter-ClaudeDevShell.ps1'
+$ConfigFile = 'C:\ProgramData\claude-win-sandbox\config.json'
 
 # --- Pre-flight checks --------------------------------------------------------
 if (-not (Get-LocalUser -Name $UserName -ErrorAction SilentlyContinue)) {

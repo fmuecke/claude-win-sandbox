@@ -14,7 +14,7 @@
     - VS + Git are assumed installed machine-wide (default). A Standard user can
       run them already; no extra grants needed for Program Files.
     - DENY ACEs override ALLOW. Review every Deny path before running.
-    - The workspace config, setup marker, and Dev Shell bootstrap are generated
+    - The workspace config, setup marker, and Dev Shell bootstrap are written
       into ProgramData (Users-traversable by default) and locked admin-write/
       Users-RX, so ClaudeSandbox can read/run them but not modify them.
     - The sandbox username and workspace directory name are baked in
@@ -36,6 +36,7 @@ $SetupVersion = 2
 $ProgramDataRoot = 'C:\ProgramData\claude-win-sandbox'    # baked in; not configurable
 $ConfigFile = Join-Path $ProgramDataRoot 'config.json'
 $SetupMarkerFile = Join-Path $ProgramDataRoot 'setup-marker.json'
+$BootstrapSource = Join-Path $PSScriptRoot 'bootstrap\Enter-ClaudeDevShell.ps1'
 $BootstrapScript = 'C:\ProgramData\claude-win-sandbox\bootstrap\Enter-ClaudeDevShell.ps1'    # baked in; not configurable
 $FirewallMode = 'BlockWindowsLanProtocols'
 $FirewallRuleGroup = 'claude-win-sandbox'
@@ -182,7 +183,7 @@ if (-not $existing) {
     New-LocalUser -Name $UserName -Password $Password `
         -FullName 'Claude Code Sandbox User' `
         -Description 'Low-privilege user for running Claude Code' `
-        -PasswordNeverExpires:$false | Out-Null
+        -PasswordNeverExpires:$true | Out-Null
 
     # Ensure it is ONLY a standard user (member of Users, not Administrators)
     Add-LocalGroupMember -Group 'Users' -Member $UserName -ErrorAction SilentlyContinue
@@ -392,141 +393,19 @@ else {
 # A standard user can execute both already. No grants needed because they live
 # in Program Files (readable+executable by Users by default).
 
-# --- 6. Generate the Dev Shell bootstrap into ProgramData --------------------
+# --- 6. Copy the Dev Shell bootstrap into ProgramData ------------------------
 # ProgramData is traversable by Users by default, so ClaudeSandbox can reach the
 # bootstrap regardless of where this repo was cloned (no profile-traversal trap).
-# We GENERATE it here and LOCK it admin-write / Users-RX, so the sandbox user can
+# We copy it here and LOCK it admin-write / Users-RX, so the sandbox user can
 # run it but cannot rewrite what executes at next launch.
-Write-Step "Writing the Developer-Shell bootstrap to ProgramData"
+Write-Step "Copying the Developer-Shell bootstrap to ProgramData"
 
 $bootstrapDir = Split-Path $BootstrapScript -Parent
 if (-not (Test-Path $bootstrapDir)) { New-Item -ItemType Directory -Path $bootstrapDir -Force | Out-Null }
-
-# NOTE: expandable here-string (@"..."@) so $UserName and $ConfigFile are baked
-# in at generation time. Runtime $-vars that must survive to execution are
-# escaped as `$.
-$configFileLiteral = $ConfigFile -replace "'", "''"
-$bootstrap = @"
-# VS Developer Shell + cd to sandbox workspace. Run AS ClaudeSandbox.
-# Uses -VsInstanceId (more reliable than -VsInstallPath discovery under a
-# different user profile). Errors loudly if VS isn't found.
-`$ConfigFile = '$configFileLiteral'
-if (-not (Test-Path `$ConfigFile)) {
-    Write-Host "Sandbox config missing: `$ConfigFile" -ForegroundColor Red
-    Write-Host "Run Setup-ClaudeSandbox.ps1 again." -ForegroundColor Yellow
-    exit 1
+if (-not (Test-Path $BootstrapSource)) {
+    throw "Bootstrap source not found: $BootstrapSource"
 }
-try {
-    `$config = Get-Content `$ConfigFile -Raw | ConvertFrom-Json
-    `$SandboxPath = `$config.sandboxPath
-}
-catch {
-    Write-Host "Sandbox config is invalid: `$(`$_.Exception.Message)" -ForegroundColor Red
-    exit 1
-}
-if ([string]::IsNullOrWhiteSpace(`$SandboxPath)) {
-    Write-Host "Sandbox config does not define sandboxPath." -ForegroundColor Red
-    exit 1
-}
-if (-not (Test-Path `$SandboxPath)) {
-    Write-Host "Sandbox path does not exist: `$SandboxPath" -ForegroundColor Red
-    exit 1
-}
-
-# Guard: this must run as the sandbox user, not whoever launched it. If the
-# bootstrap is invoked directly (no runas), refuse - running as the wrong user
-# silently defeats the boundary.
-`$me = (`$env:USERNAME)
-if (`$me -ne '$UserName') {
-    Write-Host "Refusing to run: expected user '$UserName' but running as '`$me'." -ForegroundColor Red
-    Write-Host "Launch via Start-ClaudeSandbox.ps1 (which uses runas), not directly." -ForegroundColor Yellow
-    exit 1
-}
-Write-Host "Running as `$me" -ForegroundColor Green
-
-function Write-SandboxNetworkExposureWarning {
-    `$mappedDrives = @()
-    try {
-        `$mappedDrives = @(Get-PSDrive -PSProvider FileSystem -ErrorAction Stop |
-            Where-Object { `$_.DisplayRoot -like '\\*' })
-    }
-    catch {
-        `$mappedDrives = @()
-    }
-
-    `$persistentMappings = @()
-    try {
-        if (Test-Path 'HKCU:\Network') {
-            `$persistentMappings = @(Get-ChildItem -Path 'HKCU:\Network' -ErrorAction Stop | ForEach-Object {
-                    `$props = Get-ItemProperty -Path `$_.PSPath -ErrorAction Stop
-                    [pscustomobject]@{
-                        Drive = "`$(`$_.PSChildName):"
-                        RemotePath = [string]`$props.RemotePath
-                        UserName = [string]`$props.UserName
-                    }
-                })
-        }
-    }
-    catch {
-        `$persistentMappings = @()
-    }
-
-    `$networkShortcuts = @()
-    `$shortcutDir = Join-Path `$env:APPDATA 'Microsoft\Windows\Network Shortcuts'
-    try {
-        if (Test-Path `$shortcutDir) {
-            `$networkShortcuts = @(Get-ChildItem -Path `$shortcutDir -Force -ErrorAction Stop)
-        }
-    }
-    catch {
-        `$networkShortcuts = @()
-    }
-
-    if ((-not `$mappedDrives) -and (-not `$persistentMappings) -and (-not `$networkShortcuts)) {
-        return
-    }
-
-    Write-Host "Warning: this sandbox profile has network access hints." -ForegroundColor Yellow
-    Write-Host "Review these before starting Claude if this machine is domain joined." -ForegroundColor Yellow
-
-    foreach (`$drive in `$mappedDrives) {
-        Write-Host "  mapped drive `$(`$drive.Name): -> `$(`$drive.DisplayRoot)" -ForegroundColor Yellow
-    }
-    foreach (`$mapping in `$persistentMappings) {
-        `$asUser = if ([string]::IsNullOrWhiteSpace(`$mapping.UserName)) { 'default credentials' } else { `$mapping.UserName }
-        Write-Host "  persistent drive `$(`$mapping.Drive) -> `$(`$mapping.RemotePath) (`$asUser)" -ForegroundColor Yellow
-    }
-    foreach (`$shortcut in `$networkShortcuts) {
-        Write-Host "  network shortcut `$(`$shortcut.Name)" -ForegroundColor Yellow
-    }
-}
-
-Write-SandboxNetworkExposureWarning
-
-`$vs = & "`${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe" -latest -format json | ConvertFrom-Json
-Import-Module (Join-Path `$vs.installationPath 'Common7\Tools\Microsoft.VisualStudio.DevShell.dll')
-Enter-VsDevShell -VsInstanceId `$vs.instanceId -SkipAutomaticLocation -DevCmdArguments '-arch=x64'
-Set-Location `$SandboxPath
-
-# Ensure THIS user's per-user Claude install is on PATH. Self-contained: no
-# dependency on the persisted User PATH. Prepend so the sandbox user's own copy
-# wins over any machine-wide / other-profile install that may be on PATH - the
-# install must live inside this profile to stay within the boundary.
-`$claudeBin = Join-Path `$env:USERPROFILE '.local\bin'
-if (Test-Path `$claudeBin) { `$env:PATH = "`$claudeBin;`$env:PATH" }
-
-# Verify claude resolves; if not, tell the user how to install it (as THIS user).
-if (Get-Command claude.exe -ErrorAction SilentlyContinue) {
-    Write-Host "Ready in `$SandboxPath. Launch: claude" -ForegroundColor Cyan
-}
-else {
-    Write-Host "Ready in `$SandboxPath, but 'claude' was not found." -ForegroundColor Yellow
-    Write-Host "Install it AS THIS USER (do not use a machine-wide install):" -ForegroundColor Yellow
-    Write-Host "  irm https://claude.ai/install.ps1 | iex" -ForegroundColor Cyan
-    Write-Host "Then reopen this shell - the bootstrap puts `$claudeBin on PATH." -ForegroundColor DarkGray
-}
-"@
-Set-Content -Path $BootstrapScript -Value $bootstrap -Encoding UTF8
+Copy-Item -Path $BootstrapSource -Destination $BootstrapScript -Force
 Write-Host "  wrote $BootstrapScript" -ForegroundColor Green
 
 # Lock ProgramData artifacts down: admin-write only, Users get read+execute

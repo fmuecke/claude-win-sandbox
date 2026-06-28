@@ -1,0 +1,120 @@
+# claude-win-sandbox Dev Shell bootstrap.
+# Part of claude-win-sandbox: https://github.com/fmuecke/claude-win-sandbox
+# Opens a VS Developer Shell in the configured sandbox workspace. Run AS ClaudeSandbox.
+# Uses -VsInstanceId (more reliable than -VsInstallPath discovery under a
+# different user profile). Errors loudly if VS isn't found.
+$ConfigFile = 'C:\ProgramData\claude-win-sandbox\config.json'
+if (-not (Test-Path $ConfigFile)) {
+    Write-Host "Sandbox config missing: $ConfigFile" -ForegroundColor Red
+    Write-Host 'Run Setup-ClaudeSandbox.ps1 again.' -ForegroundColor Yellow
+    exit 1
+}
+try {
+    $config = Get-Content $ConfigFile -Raw | ConvertFrom-Json
+    $SandboxPath = $config.sandboxPath
+}
+catch {
+    Write-Host "Sandbox config is invalid: $($_.Exception.Message)" -ForegroundColor Red
+    exit 1
+}
+if ([string]::IsNullOrWhiteSpace($SandboxPath)) {
+    Write-Host 'Sandbox config does not define sandboxPath.' -ForegroundColor Red
+    exit 1
+}
+if (-not (Test-Path $SandboxPath)) {
+    Write-Host "Sandbox path does not exist: $SandboxPath" -ForegroundColor Red
+    exit 1
+}
+
+# Guard: this must run as the sandbox user, not whoever launched it. If the
+# bootstrap is invoked directly (no runas), refuse - running as the wrong user
+# silently defeats the boundary.
+$me = $env:USERNAME
+if ($me -ne 'ClaudeSandbox') {
+    Write-Host "Refusing to run: expected user 'ClaudeSandbox' but running as '$me'." -ForegroundColor Red
+    Write-Host 'Launch via Start-ClaudeSandbox.ps1 (which uses runas), not directly.' -ForegroundColor Yellow
+    exit 1
+}
+Write-Host "Running as $me" -ForegroundColor Green
+
+function Write-SandboxNetworkExposureWarning {
+    $mappedDrives = @()
+    try {
+        $mappedDrives = @(Get-PSDrive -PSProvider FileSystem -ErrorAction Stop |
+            Where-Object { $_.DisplayRoot -like '\\*' })
+    }
+    catch {
+        $mappedDrives = @()
+    }
+
+    $persistentMappings = @()
+    try {
+        if (Test-Path 'HKCU:\Network') {
+            $persistentMappings = @(Get-ChildItem -Path 'HKCU:\Network' -ErrorAction Stop | ForEach-Object {
+                    $props = Get-ItemProperty -Path $_.PSPath -ErrorAction Stop
+                    [pscustomobject]@{
+                        Drive = "$($_.PSChildName):"
+                        RemotePath = [string]$props.RemotePath
+                        UserName = [string]$props.UserName
+                    }
+                })
+        }
+    }
+    catch {
+        $persistentMappings = @()
+    }
+
+    $networkShortcuts = @()
+    $shortcutDir = Join-Path $env:APPDATA 'Microsoft\Windows\Network Shortcuts'
+    try {
+        if (Test-Path $shortcutDir) {
+            $networkShortcuts = @(Get-ChildItem -Path $shortcutDir -Force -ErrorAction Stop)
+        }
+    }
+    catch {
+        $networkShortcuts = @()
+    }
+
+    if ((-not $mappedDrives) -and (-not $persistentMappings) -and (-not $networkShortcuts)) {
+        return
+    }
+
+    Write-Host 'Warning: this sandbox profile has network access hints.' -ForegroundColor Yellow
+    Write-Host 'Review these before starting Claude if this machine is domain joined.' -ForegroundColor Yellow
+
+    foreach ($drive in $mappedDrives) {
+        Write-Host "  mapped drive $($drive.Name): -> $($drive.DisplayRoot)" -ForegroundColor Yellow
+    }
+    foreach ($mapping in $persistentMappings) {
+        $asUser = if ([string]::IsNullOrWhiteSpace($mapping.UserName)) { 'default credentials' } else { $mapping.UserName }
+        Write-Host "  persistent drive $($mapping.Drive) -> $($mapping.RemotePath) ($asUser)" -ForegroundColor Yellow
+    }
+    foreach ($shortcut in $networkShortcuts) {
+        Write-Host "  network shortcut $($shortcut.Name)" -ForegroundColor Yellow
+    }
+}
+
+Write-SandboxNetworkExposureWarning
+
+$vs = & "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe" -latest -format json | ConvertFrom-Json
+Import-Module (Join-Path $vs.installationPath 'Common7\Tools\Microsoft.VisualStudio.DevShell.dll')
+Enter-VsDevShell -VsInstanceId $vs.instanceId -SkipAutomaticLocation -DevCmdArguments '-arch=x64'
+Set-Location $SandboxPath
+
+# Ensure THIS user's per-user Claude install is on PATH. Self-contained: no
+# dependency on the persisted User PATH. Prepend so the sandbox user's own copy
+# wins over any machine-wide / other-profile install that may be on PATH - the
+# install must live inside this profile to stay within the boundary.
+$claudeBin = Join-Path $env:USERPROFILE '.local\bin'
+if (Test-Path $claudeBin) { $env:PATH = "$claudeBin;$env:PATH" }
+
+# Verify claude resolves; if not, tell the user how to install it (as THIS user).
+if (Get-Command claude.exe -ErrorAction SilentlyContinue) {
+    Write-Host "Ready in $SandboxPath. Launch: claude" -ForegroundColor Cyan
+}
+else {
+    Write-Host "Ready in $SandboxPath, but 'claude' was not found." -ForegroundColor Yellow
+    Write-Host 'Install it AS THIS USER (do not use a machine-wide install):' -ForegroundColor Yellow
+    Write-Host '  irm https://claude.ai/install.ps1 | iex' -ForegroundColor Cyan
+    Write-Host "Then reopen this shell - the bootstrap puts $claudeBin on PATH." -ForegroundColor DarkGray
+}

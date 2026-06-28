@@ -33,7 +33,7 @@ shops. This project is for that case.
      internal services
    - Writes `C:\ProgramData\claude-win-sandbox\config.json` with the sandbox
      path and `setup-marker.json` with the setup version/config, locates VS
-     Developer Shell + git, generates the Dev Shell bootstrap into
+     Developer Shell + git, copies the Dev Shell bootstrap into
      `C:\ProgramData\claude-win-sandbox\bootstrap\`, and locks those ProgramData
      artifacts admin-write / Users-RX
    - Can create a desktop shortcut that launches the sandbox
@@ -45,9 +45,9 @@ shops. This project is for that case.
 
 3. **`Remove-ClaudeSandbox.ps1`** (run for teardown, elevated)
    - Removes the `ClaudeSandbox` local user, account-scoped firewall rules,
-     deny-logon hardening entries, hidden-login-screen registry value, generated
-     `C:\ProgramData\claude-win-sandbox\` files, and the sandbox user's explicit
-     ACL grant on the configured workspace
+     hidden-login-screen registry value, generated `C:\ProgramData\claude-win-sandbox\`
+     files, and the sandbox user's explicit ACL grant on the configured
+     workspace
    - Does **not** delete the shared workspace directory. Delete it manually only
      after reviewing that it contains nothing you still need.
 
@@ -55,7 +55,7 @@ shops. This project is for that case.
    - Prompts for the `ClaudeSandbox` password (via `runas`)
    - Launches a new console as `ClaudeSandbox`, in the Dev Shell, `cd`'d to the
      sandbox path stored in `C:\ProgramData\claude-win-sandbox\config.json`
-   - The generated bootstrap warns at launch if the sandbox profile has current
+   - The bootstrap warns at launch if the sandbox profile has current
      mapped drives, persistent mapped-drive entries, or saved Network Shortcuts
    - You type `claude` and go
 
@@ -168,8 +168,7 @@ Run the removal script from an elevated PowerShell session:
 
 The script removes the local sandbox account, generated
 `C:\ProgramData\claude-win-sandbox\` state, account-scoped firewall rules,
-deny-logon hardening entries, and the `ClaudeSandbox` ACL grant on the configured
-workspace.
+and the `ClaudeSandbox` ACL grant on the configured workspace.
 
 It does **not** delete the workspace directory, for example
 `C:\dev\ClaudeSandbox`. That folder is a shared working area and may contain
