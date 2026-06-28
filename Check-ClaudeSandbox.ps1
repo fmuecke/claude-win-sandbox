@@ -16,6 +16,9 @@
 .PARAMETER ConfigFile
     claude-win-sandbox ProgramData config file.
 
+.PARAMETER SetupMarkerFile
+    Versioned setup marker written by Setup-ClaudeSandbox.ps1.
+
 .EXAMPLE
     .\Check-ClaudeSandbox.ps1
     Runs all checks and prints a PASS/WARN/FAIL summary.
@@ -32,8 +35,11 @@ param(
     [string]$UserName = 'ClaudeSandbox',
     [string]$BootstrapScript = 'C:\ProgramData\claude-win-sandbox\bootstrap\Enter-ClaudeDevShell.ps1',
     [string]$ManagedSettings = 'C:\ProgramData\ClaudeCode\managed-settings.json',
-    [string]$ConfigFile = 'C:\ProgramData\claude-win-sandbox\config.json'
+    [string]$ConfigFile = 'C:\ProgramData\claude-win-sandbox\config.json',
+    [string]$SetupMarkerFile = 'C:\ProgramData\claude-win-sandbox\setup-marker.json'
 )
+
+$SetupVersion = 1
 
 $script:fails = 0
 $script:warns = 0
@@ -73,6 +79,25 @@ function Test-ProgramDataLock {
     }
     else {
         Pass "$Description is admin-write-only."
+    }
+}
+function Test-MarkerField {
+    param(
+        [object]$Marker,
+        [string]$Field,
+        [string]$Expected,
+        [string]$Description
+    )
+    $property = $Marker.PSObject.Properties[$Field]
+    if (-not $property -or [string]::IsNullOrWhiteSpace([string]$property.Value)) {
+        Fail "$Description missing in setup marker."
+        return
+    }
+    if ([string]$property.Value -ine $Expected) {
+        Fail "$Description drift: marker '$($property.Value)', expected '$Expected'."
+    }
+    else {
+        Pass "$Description matches setup marker."
     }
 }
 
@@ -118,6 +143,31 @@ else {
         Section "Summary"
         Write-Host "  $script:fails FAIL, $script:warns WARN." -ForegroundColor Red
         exit 1
+    }
+
+    if (-not (Test-Path $SetupMarkerFile)) {
+        Fail "Setup marker missing: $SetupMarkerFile - run setup with the current script."
+    }
+    else {
+        Pass "Setup marker present: $SetupMarkerFile"
+        try {
+            $marker = Get-Content $SetupMarkerFile -Raw | ConvertFrom-Json
+            if ($marker.setupVersion -ne $SetupVersion) {
+                Fail "Setup marker version drift: marker '$($marker.setupVersion)', expected '$SetupVersion'."
+            }
+            else {
+                Pass "Setup marker version matches current script."
+            }
+            Test-MarkerField -Marker $marker -Field 'userName' -Expected $UserName -Description 'Sandbox user'
+            Test-MarkerField -Marker $marker -Field 'sandboxPath' -Expected $SandboxPath -Description 'Sandbox path'
+            Test-MarkerField -Marker $marker -Field 'programDataRoot' -Expected $programDataRoot -Description 'ProgramData root'
+            Test-MarkerField -Marker $marker -Field 'configFile' -Expected $ConfigFile -Description 'Config path'
+            Test-MarkerField -Marker $marker -Field 'bootstrapScript' -Expected $BootstrapScript -Description 'Bootstrap path'
+        }
+        catch {
+            Fail "Setup marker is not valid JSON: $($_.Exception.Message)"
+        }
+        Test-ProgramDataLock -Path $SetupMarkerFile -Description 'Setup marker file' -UserName $UserName
     }
 }
 

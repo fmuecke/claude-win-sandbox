@@ -14,9 +14,9 @@
     - VS + Git are assumed installed machine-wide (default). A Standard user can
       run them already; no extra grants needed for Program Files.
     - DENY ACEs override ALLOW. Review every Deny path before running.
-    - The workspace config and Dev Shell bootstrap are generated into ProgramData
-      (Users-traversable by default) and locked admin-write/Users-RX, so
-      ClaudeSandbox can read/run them but not modify them.
+    - The workspace config, setup marker, and Dev Shell bootstrap are generated
+      into ProgramData (Users-traversable by default) and locked admin-write/
+      Users-RX, so ClaudeSandbox can read/run them but not modify them.
     - The sandbox username and workspace directory name are baked in
       (ClaudeSandbox); they are not configurable.
     - The workspace base directory is prompted for interactively if not passed.
@@ -32,8 +32,10 @@ $ErrorActionPreference = 'Stop'
 
 $UserName = 'ClaudeSandbox'   # baked in; not configurable
 $SandboxDirectoryName = 'ClaudeSandbox'   # baked in; not configurable
+$SetupVersion = 1
 $ProgramDataRoot = 'C:\ProgramData\claude-win-sandbox'    # baked in; not configurable
 $ConfigFile = Join-Path $ProgramDataRoot 'config.json'
+$SetupMarkerFile = Join-Path $ProgramDataRoot 'setup-marker.json'
 $BootstrapScript = 'C:\ProgramData\claude-win-sandbox\bootstrap\Enter-ClaudeDevShell.ps1'    # baked in; not configurable
 
 
@@ -165,13 +167,25 @@ Write-Host "  granted Modify to $callingUser and $UserName" -ForegroundColor Gre
 # --- 3. Write ProgramData configuration --------------------------------------
 # ProgramData config is the single source of truth for the sandbox path.
 # ClaudeSandbox can read it at launch but cannot alter where the bootstrap lands.
-Write-Step "Writing sandbox configuration to ProgramData"
+Write-Step "Writing sandbox configuration and setup marker to ProgramData"
 if (-not (Test-Path $ProgramDataRoot)) { New-Item -ItemType Directory -Path $ProgramDataRoot -Force | Out-Null }
 $config = [ordered]@{
     sandboxPath = $SandboxPath
 }
 $config | ConvertTo-Json | Set-Content -Path $ConfigFile -Encoding UTF8
 Write-Host "  wrote $ConfigFile" -ForegroundColor Green
+
+$setupMarker = [ordered]@{
+    setupVersion = $SetupVersion
+    createdAtUtc = (Get-Date).ToUniversalTime().ToString('o')
+    userName = $UserName
+    sandboxPath = $SandboxPath
+    programDataRoot = $ProgramDataRoot
+    configFile = $ConfigFile
+    bootstrapScript = $BootstrapScript
+}
+$setupMarker | ConvertTo-Json | Set-Content -Path $SetupMarkerFile -Encoding UTF8
+Write-Host "  wrote $SetupMarkerFile" -ForegroundColor Green
 
 # --- 4. Verify the calling user's profile is not world/Users-readable --------
 # On a standard Windows config, C:\Users\<you> is accessible only to that user,

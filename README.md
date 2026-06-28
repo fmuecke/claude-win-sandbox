@@ -28,9 +28,10 @@ shops. This project is for that case.
    - Verifies your profile isn't readable by Users/Everyone (a Standard user is
      denied your profile by default — the script warns if yours is misconfigured)
    - Writes `C:\ProgramData\claude-win-sandbox\config.json` with the sandbox
-     path, locates VS Developer Shell + git, generates the Dev Shell bootstrap
-     into `C:\ProgramData\claude-win-sandbox\bootstrap\`, and locks those
-     ProgramData artifacts admin-write / Users-RX
+     path and `setup-marker.json` with the setup version/config, locates VS
+     Developer Shell + git, generates the Dev Shell bootstrap into
+     `C:\ProgramData\claude-win-sandbox\bootstrap\`, and locks those ProgramData
+     artifacts admin-write / Users-RX
    - Can create a desktop shortcut that launches the sandbox
 
 2. **`managed-settings.json`** (copy once, elevated)
@@ -71,7 +72,7 @@ managed-settings deny rules. Defense in depth:
 | NTFS ACLs (low-priv user) | Reading/writing your secrets & system dirs | Windows kernel |
 | `managed-settings.json` deny rules | Agent tool calls to secret paths | Claude Code |
 | Permission prompts (no bypass mode) | Unreviewed command execution | Claude Code |
-| Network separation (your env) | Exfiltration | Your network |
+| Account logon hardening | Network/RDP logon as the sandbox user | Windows user rights |
 
 
 ## Prerequisites
@@ -172,6 +173,12 @@ simple and avoids storing the password anywhere.
 - **Debugging system processes still needs elevation.** Don't run *this* elevated
   to get there. Keep agent autonomy and elevation in separate processes — run
   elevated VS for debugging (agent mode off), agentic AI here (low-priv).
+- **Denying network logon is not outbound network isolation.** The setup denies
+  Windows network logon and RDP logon for `ClaudeSandbox`; that does not stop a
+  process already running as `ClaudeSandbox` from opening outbound sockets.
+  User-scoped firewall egress blocking is a later hardening step and is not
+  implemented yet; use external firewall/proxy controls if you need network
+  egress isolation today.
 
 ## Why not Docker / WSL?
 
