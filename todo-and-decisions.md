@@ -4,7 +4,7 @@ Running log to update the project step by step. Captures decisions already made
 (with rationale) and open items still to action. Personal/career discussions are
 deliberately excluded.
 
-_Last updated: 2026-06-27_
+_Last updated: 2026-06-28_
 
 ---
 
@@ -33,6 +33,10 @@ _Last updated: 2026-06-27_
 - **Interactive logon stays ENABLED on purpose** — the launcher needs it; denying
   it breaks launch. Deny only network + RDP logon.
 - **Password never-expires + user-cannot-change**, account hidden from login screen.
+- **Outbound firewall protection is account-scoped and operational.** Setup
+  blocks `ClaudeSandbox` outbound SMB/NetBIOS/RDP/WinRM-style ports while
+  leaving HTTP/HTTPS and internal web services usable. Strict destination
+  allowlisting is deferred because it needs a managed proxy or network policy.
 
 ### Filesystem layout (DECIDED — partially implemented, see Todo)
 - **Config/bootstrap/managed-settings → ProgramData**
@@ -128,13 +132,15 @@ _Last updated: 2026-06-27_
       layer differs (Copilot CLI: server-side org policy, no local
       `managed-settings.json` equivalent; needs PAT with Copilot Requests scope +
       a seat).
-- [ ] Verify whether Copilot CLI network egress can be restricted locally or only
-      at the network layer.
+- [ ] Verify whether Copilot CLI needs the same operational firewall profile or
+      stricter proxy/network-layer egress control.
 
 ---
 
 ## Parking lot / nice-to-have
-- [ ] Egress allowlist for the sandbox process (e.g. `api.anthropic.com`,
-      `dev.azure.com`) — easier on a VM than a dev machine.
+- [x] Operational outbound firewall rules for the sandbox account
+      (SMB/NetBIOS/RDP/WinRM blocked; web remains available).
+- [ ] Strict egress allowlist for the sandbox process (e.g. `api.anthropic.com`,
+      `dev.azure.com`) via managed local proxy, network firewall, or VM.
 - [ ] Pre-commit secrets scanning (`gitleaks` / `detect-secrets`) as an active
       layer beyond content exclusions.

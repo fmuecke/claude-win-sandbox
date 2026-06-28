@@ -32,14 +32,103 @@ $ErrorActionPreference = 'Stop'
 
 $UserName = 'ClaudeSandbox'   # baked in; not configurable
 $SandboxDirectoryName = 'ClaudeSandbox'   # baked in; not configurable
-$SetupVersion = 1
+$SetupVersion = 2
 $ProgramDataRoot = 'C:\ProgramData\claude-win-sandbox'    # baked in; not configurable
 $ConfigFile = Join-Path $ProgramDataRoot 'config.json'
 $SetupMarkerFile = Join-Path $ProgramDataRoot 'setup-marker.json'
 $BootstrapScript = 'C:\ProgramData\claude-win-sandbox\bootstrap\Enter-ClaudeDevShell.ps1'    # baked in; not configurable
+$FirewallMode = 'BlockWindowsLanProtocols'
+$FirewallRuleGroup = 'claude-win-sandbox'
+$FirewallRules = @(
+    [pscustomobject]@{
+        Name = 'claude_win_sandbox_block_smb_netbios_tcp'
+        DisplayName = 'Claude Sandbox - Block SMB and NetBIOS TCP'
+        Description = 'Blocks ClaudeSandbox outbound SMB and NetBIOS session traffic while leaving web traffic available.'
+        Protocol = 'TCP'
+        RemotePort = @('139', '445')
+    },
+    [pscustomobject]@{
+        Name = 'claude_win_sandbox_block_netbios_udp'
+        DisplayName = 'Claude Sandbox - Block NetBIOS UDP'
+        Description = 'Blocks ClaudeSandbox outbound NetBIOS name and datagram traffic while leaving web traffic available.'
+        Protocol = 'UDP'
+        RemotePort = @('137', '138')
+    },
+    [pscustomobject]@{
+        Name = 'claude_win_sandbox_block_remote_admin_tcp'
+        DisplayName = 'Claude Sandbox - Block remote admin TCP'
+        Description = 'Blocks ClaudeSandbox outbound RPC endpoint mapper, RDP, and WinRM traffic while leaving web traffic available.'
+        Protocol = 'TCP'
+        RemotePort = @('135', '3389', '5985', '5986')
+    }
+)
 
 
 function Write-Step { param($m) Write-Host "`n==> $m" -ForegroundColor Cyan }
+function Get-LocalUserFirewallSddl {
+    param([string]$Sid)
+    return "O:LSD:(A;;CC;;;$Sid)"
+}
+function Test-LocalFirewallPolicyApplies {
+    try {
+        $policy = New-Object -ComObject HNetCfg.FwPolicy2
+        if ($policy.LocalPolicyModifyState -ne 0) {
+            Write-Warning "Local firewall rules may not take effect: LocalPolicyModifyState=$($policy.LocalPolicyModifyState). Continuing setup."
+            return $false
+        }
+        return $true
+    }
+    catch {
+        Write-Warning "Cannot verify that local firewall rules apply: $($_.Exception.Message). Continuing setup."
+        return $false
+    }
+}
+function Set-SandboxFirewallRule {
+    param(
+        [pscustomobject]$RuleSpec,
+        [string]$LocalUserSddl,
+        [string]$Group
+    )
+
+    $rule = Get-NetFirewallRule -Name $RuleSpec.Name -ErrorAction SilentlyContinue
+    if (-not $rule) {
+        New-NetFirewallRule `
+            -Name $RuleSpec.Name `
+            -DisplayName $RuleSpec.DisplayName `
+            -Description $RuleSpec.Description `
+            -Group $Group `
+            -Enabled True `
+            -Profile Any `
+            -Direction Outbound `
+            -Action Block `
+            -Protocol $RuleSpec.Protocol `
+            -RemotePort $RuleSpec.RemotePort `
+            -LocalUser $LocalUserSddl | Out-Null
+        Write-Host "  created firewall rule: $($RuleSpec.DisplayName)" -ForegroundColor Green
+        return
+    }
+
+    Set-NetFirewallRule `
+        -InputObject $rule `
+        -DisplayName $RuleSpec.DisplayName `
+        -Description $RuleSpec.Description `
+        -Group $Group `
+        -Enabled True `
+        -Profile Any `
+        -Direction Outbound `
+        -Action Block | Out-Null
+
+    Get-NetFirewallPortFilter -AssociatedNetFirewallRule $rule |
+    Set-NetFirewallPortFilter -Protocol $RuleSpec.Protocol -LocalPort Any -RemotePort $RuleSpec.RemotePort | Out-Null
+
+    Get-NetFirewallAddressFilter -AssociatedNetFirewallRule $rule |
+    Set-NetFirewallAddressFilter -LocalAddress Any -RemoteAddress Any | Out-Null
+
+    Get-NetFirewallSecurityFilter -AssociatedNetFirewallRule $rule |
+    Set-NetFirewallSecurityFilter -LocalUser $LocalUserSddl | Out-Null
+
+    Write-Host "  updated firewall rule: $($RuleSpec.DisplayName)" -ForegroundColor Green
+}
 
 # --- 0. Sanity ----------------------------------------------------------------
 $callingUser = [System.Security.Principal.WindowsIdentity]::GetCurrent().Name  # DOMAIN\user
@@ -151,6 +240,28 @@ if (-not (Test-Path $ualPath)) { New-Item -Path $ualPath -Force | Out-Null }
 New-ItemProperty -Path $ualPath -Name $UserName -Value 0 -PropertyType DWord -Force | Out-Null
 Write-Host "  hidden from the login screen" -ForegroundColor Green
 
+# --- 1c. Account-scoped outbound firewall hardening --------------------------
+# Keep Claude operational by allowing normal web/HTTPS egress, but block common
+# Windows file-sharing and remote-admin ports for the sandbox identity.
+Write-Step "Configuring outbound firewall protection for '$UserName'"
+try {
+    $localUserSddl = Get-LocalUserFirewallSddl -Sid $sid
+    $localFirewallPolicyApplies = Test-LocalFirewallPolicyApplies
+    foreach ($ruleSpec in $FirewallRules) {
+        Set-SandboxFirewallRule -RuleSpec $ruleSpec -LocalUserSddl $localUserSddl -Group $FirewallRuleGroup
+    }
+    if ($localFirewallPolicyApplies) {
+        Write-Host "  firewall mode: $FirewallMode (web/HTTPS remains allowed)" -ForegroundColor Green
+    }
+    else {
+        Write-Warning "  firewall rules were created/updated, but local policy may prevent them from taking effect."
+    }
+}
+catch {
+    Write-Warning "Could not configure outbound firewall protection: $($_.Exception.Message)"
+    Write-Warning "Continuing setup. Run Check-ClaudeSandbox.ps1 later to verify firewall state."
+}
+
 # --- 2. Shared workspace permissions -----------------------------------------
 Write-Step "Configuring shared workspace at $SandboxPath"
 if (-not (Test-Path $SandboxPath)) {
@@ -183,6 +294,8 @@ $setupMarker = [ordered]@{
     programDataRoot = $ProgramDataRoot
     configFile = $ConfigFile
     bootstrapScript = $BootstrapScript
+    firewallMode = $FirewallMode
+    firewallRuleNames = @($FirewallRules | ForEach-Object { $_.Name })
 }
 $setupMarker | ConvertTo-Json | Set-Content -Path $SetupMarkerFile -Encoding UTF8
 Write-Host "  wrote $SetupMarkerFile" -ForegroundColor Green
@@ -302,6 +415,65 @@ if (`$me -ne '$UserName') {
     exit 1
 }
 Write-Host "Running as `$me" -ForegroundColor Green
+
+function Write-SandboxNetworkExposureWarning {
+    `$mappedDrives = @()
+    try {
+        `$mappedDrives = @(Get-PSDrive -PSProvider FileSystem -ErrorAction Stop |
+            Where-Object { `$_.DisplayRoot -like '\\*' })
+    }
+    catch {
+        `$mappedDrives = @()
+    }
+
+    `$persistentMappings = @()
+    try {
+        if (Test-Path 'HKCU:\Network') {
+            `$persistentMappings = @(Get-ChildItem -Path 'HKCU:\Network' -ErrorAction Stop | ForEach-Object {
+                    `$props = Get-ItemProperty -Path `$_.PSPath -ErrorAction Stop
+                    [pscustomobject]@{
+                        Drive = "`$(`$_.PSChildName):"
+                        RemotePath = [string]`$props.RemotePath
+                        UserName = [string]`$props.UserName
+                    }
+                })
+        }
+    }
+    catch {
+        `$persistentMappings = @()
+    }
+
+    `$networkShortcuts = @()
+    `$shortcutDir = Join-Path `$env:APPDATA 'Microsoft\Windows\Network Shortcuts'
+    try {
+        if (Test-Path `$shortcutDir) {
+            `$networkShortcuts = @(Get-ChildItem -Path `$shortcutDir -Force -ErrorAction Stop)
+        }
+    }
+    catch {
+        `$networkShortcuts = @()
+    }
+
+    if ((-not `$mappedDrives) -and (-not `$persistentMappings) -and (-not `$networkShortcuts)) {
+        return
+    }
+
+    Write-Host "Warning: this sandbox profile has network access hints." -ForegroundColor Yellow
+    Write-Host "Review these before starting Claude if this machine is domain joined." -ForegroundColor Yellow
+
+    foreach (`$drive in `$mappedDrives) {
+        Write-Host "  mapped drive `$(`$drive.Name): -> `$(`$drive.DisplayRoot)" -ForegroundColor Yellow
+    }
+    foreach (`$mapping in `$persistentMappings) {
+        `$asUser = if ([string]::IsNullOrWhiteSpace(`$mapping.UserName)) { 'default credentials' } else { `$mapping.UserName }
+        Write-Host "  persistent drive `$(`$mapping.Drive) -> `$(`$mapping.RemotePath) (`$asUser)" -ForegroundColor Yellow
+    }
+    foreach (`$shortcut in `$networkShortcuts) {
+        Write-Host "  network shortcut `$(`$shortcut.Name)" -ForegroundColor Yellow
+    }
+}
+
+Write-SandboxNetworkExposureWarning
 
 `$vs = & "`${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe" -latest -format json | ConvertFrom-Json
 Import-Module (Join-Path `$vs.installationPath 'Common7\Tools\Microsoft.VisualStudio.DevShell.dll')

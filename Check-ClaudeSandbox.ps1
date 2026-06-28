@@ -39,7 +39,28 @@ param(
     [string]$SetupMarkerFile = 'C:\ProgramData\claude-win-sandbox\setup-marker.json'
 )
 
-$SetupVersion = 1
+$SetupVersion = 2
+$FirewallMode = 'BlockWindowsLanProtocols'
+$FirewallRules = @(
+    [pscustomobject]@{
+        Name = 'claude_win_sandbox_block_smb_netbios_tcp'
+        DisplayName = 'Claude Sandbox - Block SMB and NetBIOS TCP'
+        Protocol = 'TCP'
+        RemotePort = @('139', '445')
+    },
+    [pscustomobject]@{
+        Name = 'claude_win_sandbox_block_netbios_udp'
+        DisplayName = 'Claude Sandbox - Block NetBIOS UDP'
+        Protocol = 'UDP'
+        RemotePort = @('137', '138')
+    },
+    [pscustomobject]@{
+        Name = 'claude_win_sandbox_block_remote_admin_tcp'
+        DisplayName = 'Claude Sandbox - Block remote admin TCP'
+        Protocol = 'TCP'
+        RemotePort = @('135', '3389', '5985', '5986')
+    }
+)
 
 $script:fails = 0
 $script:warns = 0
@@ -100,7 +121,122 @@ function Test-MarkerField {
         Pass "$Description matches setup marker."
     }
 }
+function Test-MarkerStringList {
+    param(
+        [object]$Marker,
+        [string]$Field,
+        [string[]]$Expected,
+        [string]$Description
+    )
+    $property = $Marker.PSObject.Properties[$Field]
+    if (-not $property) {
+        Fail "$Description missing in setup marker."
+        return
+    }
 
+    $actual = @($property.Value) | ForEach-Object { [string]$_ } | Sort-Object
+    $expectedSorted = @($Expected) | ForEach-Object { [string]$_ } | Sort-Object
+    $delta = Compare-Object -ReferenceObject $expectedSorted -DifferenceObject $actual
+    if ($delta) {
+        Fail "$Description drift: marker '$($actual -join ', ')', expected '$($expectedSorted -join ', ')'."
+    }
+    else {
+        Pass "$Description matches setup marker."
+    }
+}
+function Expand-FirewallValues {
+    param([object[]]$Values)
+    $expanded = @()
+    foreach ($value in @($Values)) {
+        if ($null -eq $value) { continue }
+        $expanded += ([string]$value -split ',' | ForEach-Object { $_.Trim() } | Where-Object { $_ })
+    }
+    return $expanded
+}
+function Test-StringSetEquals {
+    param(
+        [string[]]$Actual,
+        [string[]]$Expected
+    )
+    $actualSorted = @($Actual) | ForEach-Object { [string]$_ } | Sort-Object
+    $expectedSorted = @($Expected) | ForEach-Object { [string]$_ } | Sort-Object
+    return -not (Compare-Object -ReferenceObject $expectedSorted -DifferenceObject $actualSorted)
+}
+function Test-LocalFirewallPolicyApplies {
+    try {
+        $policy = New-Object -ComObject HNetCfg.FwPolicy2
+        if ($policy.LocalPolicyModifyState -eq 0) {
+            Pass "Local firewall policy changes apply on active profiles."
+        }
+        else {
+            Fail "Local firewall policy changes may not apply: LocalPolicyModifyState=$($policy.LocalPolicyModifyState)."
+        }
+    }
+    catch {
+        Fail "Could not verify local firewall policy state: $($_.Exception.Message)"
+    }
+}
+function Test-SandboxFirewallRule {
+    param(
+        [pscustomobject]$RuleSpec,
+        [string]$SandboxSid
+    )
+
+    $ok = $true
+    $rule = Get-NetFirewallRule -Name $RuleSpec.Name -ErrorAction SilentlyContinue
+    if (-not $rule) {
+        Fail "Firewall rule missing: $($RuleSpec.Name). Run setup."
+        return
+    }
+
+    if ($rule.Enabled -ine 'True') {
+        Fail "Firewall rule '$($RuleSpec.Name)' is not enabled."
+        $ok = $false
+    }
+    if ($rule.Direction -ine 'Outbound') {
+        Fail "Firewall rule '$($RuleSpec.Name)' is not outbound."
+        $ok = $false
+    }
+    if ($rule.Action -ine 'Block') {
+        Fail "Firewall rule '$($RuleSpec.Name)' is not a block rule."
+        $ok = $false
+    }
+
+    try {
+        $portFilter = Get-NetFirewallPortFilter -AssociatedNetFirewallRule $rule
+        if ($portFilter.Protocol -ine $RuleSpec.Protocol) {
+            Fail "Firewall rule '$($RuleSpec.Name)' protocol drift: '$($portFilter.Protocol)', expected '$($RuleSpec.Protocol)'."
+            $ok = $false
+        }
+
+        $actualPorts = Expand-FirewallValues -Values $portFilter.RemotePort
+        if (-not (Test-StringSetEquals -Actual $actualPorts -Expected $RuleSpec.RemotePort)) {
+            Fail "Firewall rule '$($RuleSpec.Name)' remote ports drift: '$($actualPorts -join ', ')', expected '$($RuleSpec.RemotePort -join ', ')'."
+            $ok = $false
+        }
+    }
+    catch {
+        Fail "Could not read port filter for firewall rule '$($RuleSpec.Name)': $($_.Exception.Message)"
+        $ok = $false
+    }
+
+    try {
+        $securityFilter = Get-NetFirewallSecurityFilter -AssociatedNetFirewallRule $rule
+        $localUser = [string]$securityFilter.LocalUser
+        if ([string]::IsNullOrWhiteSpace($localUser) -or ($localUser -notlike "*$SandboxSid*")) {
+            Fail "Firewall rule '$($RuleSpec.Name)' is not scoped to $SandboxSid."
+            $ok = $false
+        }
+    }
+    catch {
+        Fail "Could not read security filter for firewall rule '$($RuleSpec.Name)': $($_.Exception.Message)"
+        $ok = $false
+    }
+
+    if ($ok) {
+        Pass "Firewall rule '$($RuleSpec.Name)' blocks $($RuleSpec.Protocol) ports $($RuleSpec.RemotePort -join ', ') for '$UserName'."
+    }
+}
 $isAdmin = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()
 ).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
 if (-not $isAdmin) {
@@ -163,6 +299,8 @@ else {
             Test-MarkerField -Marker $marker -Field 'programDataRoot' -Expected $programDataRoot -Description 'ProgramData root'
             Test-MarkerField -Marker $marker -Field 'configFile' -Expected $ConfigFile -Description 'Config path'
             Test-MarkerField -Marker $marker -Field 'bootstrapScript' -Expected $BootstrapScript -Description 'Bootstrap path'
+            Test-MarkerField -Marker $marker -Field 'firewallMode' -Expected $FirewallMode -Description 'Firewall mode'
+            Test-MarkerStringList -Marker $marker -Field 'firewallRuleNames' -Expected @($FirewallRules | ForEach-Object { $_.Name }) -Description 'Firewall rule names'
         }
         catch {
             Fail "Setup marker is not valid JSON: $($_.Exception.Message)"
@@ -255,7 +393,15 @@ $hidden = (Get-ItemProperty -Path $ualPath -Name $UserName -ErrorAction Silently
 if ($hidden -eq 0) { Pass "Hidden from the login screen." }
 else { Warn "Not hidden from the login screen (cosmetic)." }
 
-# --- 3. Workspace ACLs --------------------------------------------------------
+# --- 3. Outbound firewall -----------------------------------------------------
+Section "Outbound firewall"
+Test-LocalFirewallPolicyApplies
+foreach ($ruleSpec in $FirewallRules) {
+    Test-SandboxFirewallRule -RuleSpec $ruleSpec -SandboxSid $u.SID.Value
+}
+Write-Host "  [INFO] Firewall mode preserves normal web/HTTPS egress; it is not full egress isolation." -ForegroundColor DarkGray
+
+# --- 4. Workspace ACLs --------------------------------------------------------
 Section "Workspace permissions"
 if (-not (Test-Path $SandboxPath)) {
     Fail "Sandbox path does not exist: $SandboxPath"
@@ -271,7 +417,7 @@ else {
     }
 }
 
-# --- 4. Caller profile not world-readable ------------------------------------
+# --- 5. Caller profile not world-readable ------------------------------------
 Section "Your profile is not exposed"
 $callingProfile = $env:USERPROFILE
 $acl = Get-Acl $callingProfile
@@ -287,7 +433,7 @@ else {
     Pass "Profile not readable by Users/Everyone - '$UserName' is denied by default."
 }
 
-# --- 5. Bootstrap + tooling ---------------------------------------------------
+# --- 6. Bootstrap + tooling ---------------------------------------------------
 Section "Dev Shell bootstrap & toolchain"
 if (Test-Path $BootstrapScript) {
     Pass "Bootstrap present: $BootstrapScript"
@@ -318,7 +464,7 @@ else { Warn "vswhere not found - is Visual Studio installed machine-wide?" }
 if (Get-Command git.exe -ErrorAction SilentlyContinue) { Pass "git on machine PATH." }
 else { Warn "git not on machine PATH." }
 
-# --- 6. Claude Code install location -----------------------------------------
+# --- 7. Claude Code install location -----------------------------------------
 # The boundary depends on ClaudeSandbox running ITS OWN per-user copy, not one
 # from your profile or a machine-wide install: either of those could be picked
 # up off the machine PATH, pulling binary/config from outside the sandbox.
@@ -367,7 +513,7 @@ else {
     Pass "No Claude installs outside $UserName."
 }
 
-# --- 7. Claude Code managed policy -------------------------------------------
+# --- 8. Claude Code managed policy -------------------------------------------
 Section "Claude Code managed policy"
 if (-not (Test-Path $ManagedSettings)) {
     Warn "Managed settings not found: $ManagedSettings - copy managed-settings.json there (see README)."

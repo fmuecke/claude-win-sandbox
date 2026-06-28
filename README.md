@@ -27,6 +27,10 @@ shops. This project is for that case.
      creates `C:\dev\ClaudeSandbox` and grants `ClaudeSandbox` Modify on that tree
    - Verifies your profile isn't readable by Users/Everyone (a Standard user is
      denied your profile by default — the script warns if yours is misconfigured)
+   - Adds account-scoped outbound firewall blocks for common Windows
+     file-sharing and remote-admin ports (`137-139`, `445`, `135`, `3389`,
+     `5985-5986`) while leaving web/HTTPS access available for Claude, git, and
+     internal services
    - Writes `C:\ProgramData\claude-win-sandbox\config.json` with the sandbox
      path and `setup-marker.json` with the setup version/config, locates VS
      Developer Shell + git, generates the Dev Shell bootstrap into
@@ -43,11 +47,14 @@ shops. This project is for that case.
    - Prompts for the `ClaudeSandbox` password (via `runas`)
    - Launches a new console as `ClaudeSandbox`, in the Dev Shell, `cd`'d to the
      sandbox path stored in `C:\ProgramData\claude-win-sandbox\config.json`
+   - The generated bootstrap warns at launch if the sandbox profile has current
+     mapped drives, persistent mapped-drive entries, or saved Network Shortcuts
    - You type `claude` and go
 
 4. **`Check-ClaudeSandbox.ps1`** (run anytime, read-only)
    - Verifies the whole setup: config valid and locked, user exists & is
-     non-admin, hardening applied, workspace ACLs, your profile isn't exposed,
+     non-admin, hardening applied, outbound firewall rules are present and
+     scoped to `ClaudeSandbox`, workspace ACLs, your profile isn't exposed,
      bootstrap present + locked, toolchain present, Claude installed per-user
      (and *not* leaking in from elsewhere), policy file valid and admin-locked
    - Prints PASS/WARN/FAIL; exits non-zero on any FAIL. Run elevated for full
@@ -73,6 +80,7 @@ managed-settings deny rules. Defense in depth:
 | `managed-settings.json` deny rules | Agent tool calls to secret paths | Claude Code |
 | Permission prompts (no bypass mode) | Unreviewed command execution | Claude Code |
 | Account logon hardening | Network/RDP logon as the sandbox user | Windows user rights |
+| Account-scoped firewall rules | Outbound SMB/NetBIOS/RDP/WinRM from the sandbox user | Windows Firewall |
 
 
 ## Prerequisites
@@ -173,12 +181,17 @@ simple and avoids storing the password anywhere.
 - **Debugging system processes still needs elevation.** Don't run *this* elevated
   to get there. Keep agent autonomy and elevation in separate processes — run
   elevated VS for debugging (agent mode off), agentic AI here (low-priv).
-- **Denying network logon is not outbound network isolation.** The setup denies
-  Windows network logon and RDP logon for `ClaudeSandbox`; that does not stop a
-  process already running as `ClaudeSandbox` from opening outbound sockets.
-  User-scoped firewall egress blocking is a later hardening step and is not
-  implemented yet; use external firewall/proxy controls if you need network
-  egress isolation today.
+- **Outbound firewall protection is operational, not strict egress isolation.**
+  The setup blocks common Windows sharing and remote-admin outbound ports for
+  `ClaudeSandbox`, but still allows normal web/HTTPS traffic so Claude Code,
+  git, installers, package managers, and internal web services keep working. It
+  does not stop exfiltration over allowed protocols such as HTTPS. Use a managed
+  local proxy, network firewall, or VM if you need destination allowlisting or
+  full egress isolation.
+- **Mapped-drive checks are hints, not complete access proofs.** The bootstrap
+  warns at launch about mapped-drive and Network Shortcut hints visible to the
+  `ClaudeSandbox` session. It does not enumerate another user's Credential
+  Manager entries or prove what a server will allow at connection time.
 
 ## Why not Docker / WSL?
 
