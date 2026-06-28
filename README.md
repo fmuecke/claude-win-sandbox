@@ -43,7 +43,15 @@ shops. This project is for that case.
      bypass-permissions mode, pre-approves routine git + build verbs
    - Copy to `C:\ProgramData\ClaudeCode\` and lock it (see setup below)
 
-3. **`Start-ClaudeSandbox.ps1`** (run per session, normal priv)
+3. **`Remove-ClaudeSandbox.ps1`** (run for teardown, elevated)
+   - Removes the `ClaudeSandbox` local user, account-scoped firewall rules,
+     deny-logon hardening entries, hidden-login-screen registry value, generated
+     `C:\ProgramData\claude-win-sandbox\` files, and the sandbox user's explicit
+     ACL grant on the configured workspace
+   - Does **not** delete the shared workspace directory. Delete it manually only
+     after reviewing that it contains nothing you still need.
+
+4. **`Start-ClaudeSandbox.ps1`** (run per session, normal priv)
    - Prompts for the `ClaudeSandbox` password (via `runas`)
    - Launches a new console as `ClaudeSandbox`, in the Dev Shell, `cd`'d to the
      sandbox path stored in `C:\ProgramData\claude-win-sandbox\config.json`
@@ -51,7 +59,7 @@ shops. This project is for that case.
      mapped drives, persistent mapped-drive entries, or saved Network Shortcuts
    - You type `claude` and go
 
-4. **`Check-ClaudeSandbox.ps1`** (run anytime, read-only)
+5. **`Check-ClaudeSandbox.ps1`** (run anytime, read-only)
    - Verifies the whole setup: config valid and locked, user exists & is
      non-admin, hardening applied, outbound firewall rules are present and
      scoped to `ClaudeSandbox`, workspace ACLs, your profile isn't exposed,
@@ -90,7 +98,7 @@ managed-settings deny rules. Defense in depth:
 - Git for Windows installed machine-wide
 - **Claude Code installed *as the `ClaudeSandbox` user* (per-user, not
   machine-wide).** See [Installing Claude Code](#installing-claude-code).
-- Admin rights for the two setup scripts
+- Admin rights for setup, removal, and policy installation
 
 
 ## Installing Claude Code
@@ -120,7 +128,10 @@ per-user install is present and warns if a copy exists elsewhere.
 ```powershell
 # 1. Provision the user, ACLs, bootstrap  (ELEVATED)
 .\Setup-ClaudeSandbox.ps1
-#   prompts for the base directory; Enter accepts C:\dev, creating C:\dev\ClaudeSandbox
+#   prompts for the base directory where the ClaudeSandbox workspace folder
+#   will be created; Enter accepts C:\dev
+#   if the workspace folder already exists, setup asks before reusing it
+#   when creating ClaudeSandbox, setup asks for the password twice
 
 # 2. Install the Claude Code policy  (ELEVATED)
 New-Item -ItemType Directory -Path C:\ProgramData\ClaudeCode -Force | Out-Null
@@ -145,6 +156,31 @@ Then, day to day (normal PowerShell, no elevation):
 .\Start-ClaudeSandbox.ps1                           # uses C:\dev\ClaudeSandbox
 # or use the optional desktop shortcut created by setup
 # enter ClaudeSandbox password (runas) -> new window opens -> type: claude
+```
+
+## Removal
+
+Run the removal script from an elevated PowerShell session:
+
+```powershell
+.\Remove-ClaudeSandbox.ps1
+```
+
+The script removes the local sandbox account, generated
+`C:\ProgramData\claude-win-sandbox\` state, account-scoped firewall rules,
+deny-logon hardening entries, and the `ClaudeSandbox` ACL grant on the configured
+workspace.
+
+It does **not** delete the workspace directory, for example
+`C:\dev\ClaudeSandbox`. That folder is a shared working area and may contain
+repositories or files you still need. Delete it manually after review if it is no
+longer needed.
+
+If ProgramData state has already been removed, pass the workspace explicitly so
+the script can still remove the stale ACL grant:
+
+```powershell
+.\Remove-ClaudeSandbox.ps1 -SandboxPath C:\dev\ClaudeSandbox
 ```
 
 
