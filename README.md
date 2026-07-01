@@ -9,6 +9,26 @@ containment. Use a VM for adversarial code or strong isolation.
 > The CEO's assistant is not the CEO.
 > Give the agent delegated access, not your full Windows identity.
 
+## What It Offers
+
+This project helps you:
+
+- Run Claude Code as a dedicated standard Windows user instead of your main account.
+- Keep Claude Code configuration, credentials, and installation under `C:\Users\ClaudeSandbox`.
+- Limit expected agent writes to a fixed sandbox workspace.
+- Protect launcher, bootstrap, check, and managed-settings files under admin-write ProgramData paths.
+- Block common Windows lateral-movement protocols from the sandbox account.
+
+## Limitations
+
+This project currently does not solve:
+
+- Hard isolation for malicious code, malware, or highly sensitive third-party repos.
+- Prompt injection from repos, issues, docs, web pages, attachments, tool output, or MCP servers.
+- Exfiltration over allowed channels such as HTTPS, git remotes, package feeds, or internal web apps.
+- Protection for anything readable by `ClaudeSandbox`, including the sandbox workspace, its own credentials, broadly readable local paths, and secrets stored outside protected profile areas.
+- Rollback, snapshots, resource limits, centralized audit logs, or automatic kill switches.
+
 ## Requirements
 
 - Windows 10/11
