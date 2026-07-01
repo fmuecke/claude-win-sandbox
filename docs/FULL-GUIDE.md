@@ -1,4 +1,4 @@
-# claude-win-sandbox extended guide
+# claude-win-sandbox full guide
 
 Run **Claude Code** on Windows under a dedicated low-privilege user, inside a
 Visual Studio Developer Shell, scoped to a fixed workspace directory — **without

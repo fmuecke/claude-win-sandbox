@@ -90,10 +90,11 @@ for example `C:\dev\ClaudeSandbox`.
 
 ## More Detail
 
-- [Extended guide](docs/extended.md)
+- [Full guide](docs/FULL-GUIDE.md)
 - [Threat model](docs/threat-model.md)
 - [Todo and decisions](docs/todo-and-decisions.md)
-- [Codex Windows sandbox notes](docs/codex-sandbox.md)
+- [Codex Windows sandbox concepts and notes](docs/codex-sandbox.md)
+- [The Shorthand Guide to Everything Agentic Security](docs/the-security-guide.md)
 
 ## License
 
