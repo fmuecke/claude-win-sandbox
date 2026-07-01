@@ -14,9 +14,10 @@
     - VS + Git are assumed installed machine-wide (default). A Standard user can
       run them already; no extra grants needed for Program Files.
     - DENY ACEs override ALLOW. Review every Deny path before running.
-    - The workspace config and Dev Shell bootstrap are written into ProgramData
-      (Users-traversable by default) and locked admin-write/Users-RX, so
-      ClaudeSandbox can read/run them but not modify them.
+    - The workspace config, launcher/check scripts, and Dev Shell bootstrap are
+      written into ProgramData (Users-traversable by default) and locked
+      admin-write/Users-RX, so ClaudeSandbox can read/run them but not modify
+      them.
     - The sandbox username and workspace directory name are baked in
       (ClaudeSandbox); they are not configurable.
     - The workspace base directory is prompted for interactively if not passed.
@@ -32,11 +33,15 @@ $ErrorActionPreference = 'Stop'
 
 $UserName = 'ClaudeSandbox'   # baked in; not configurable
 $SandboxDirectoryName = 'ClaudeSandbox'   # baked in; not configurable
-$SetupVersion = 2
+$SetupVersion = 3
 $ProgramDataRoot = 'C:\ProgramData\claude-win-sandbox'    # baked in; not configurable
 $ConfigFile = Join-Path $ProgramDataRoot 'config.json'
 $LegacySetupMarkerFile = Join-Path $ProgramDataRoot 'setup-marker.json'
+$LauncherSource = Join-Path $PSScriptRoot 'Start-ClaudeSandbox.ps1'
+$CheckerSource = Join-Path $PSScriptRoot 'Check-ClaudeSandbox.ps1'
 $BootstrapSource = Join-Path $PSScriptRoot 'bootstrap\Enter-ClaudeDevShell.ps1'
+$LauncherScript = Join-Path $ProgramDataRoot 'Start-ClaudeSandbox.ps1'
+$CheckerScript = Join-Path $ProgramDataRoot 'Check-ClaudeSandbox.ps1'
 $BootstrapScript = 'C:\ProgramData\claude-win-sandbox\bootstrap\Enter-ClaudeDevShell.ps1'    # baked in; not configurable
 $ShortcutPath = Join-Path (Join-Path $env:PUBLIC 'Desktop') 'Claude (sandboxed).lnk'
 $FirewallMode = 'BlockWindowsLanProtocols'
@@ -270,7 +275,7 @@ try {
 }
 catch {
     Write-Warning "Could not configure outbound firewall protection: $($_.Exception.Message)"
-    Write-Warning "Continuing setup. Run Check-ClaudeSandbox.ps1 later to verify firewall state."
+    Write-Warning "Continuing setup. Run & '$CheckerScript' later to verify firewall state."
 }
 
 # --- 2. Shared workspace permissions -----------------------------------------
@@ -371,20 +376,27 @@ else {
 # A standard user can execute both already. No grants needed because they live
 # in Program Files (readable+executable by Users by default).
 
-# --- 6. Copy the Dev Shell bootstrap into ProgramData ------------------------
+# --- 6. Copy trusted launch artifacts into ProgramData -----------------------
 # ProgramData is traversable by Users by default, so ClaudeSandbox can reach the
-# bootstrap regardless of where this repo was cloned (no profile-traversal trap).
-# We copy it here and LOCK it admin-write / Users-RX, so the sandbox user can
-# run it but cannot rewrite what executes at next launch.
-Write-Step "Copying the Developer-Shell bootstrap to ProgramData"
+# launcher/check/bootstrap regardless of where this repo was cloned (no
+# profile-traversal trap). We copy them here and LOCK them admin-write / Users-RX,
+# so the sandbox user can run them but cannot rewrite what executes at launch.
+Write-Step "Copying trusted launch artifacts to ProgramData"
 
 $bootstrapDir = Split-Path $BootstrapScript -Parent
 if (-not (Test-Path $bootstrapDir)) { New-Item -ItemType Directory -Path $bootstrapDir -Force | Out-Null }
-if (-not (Test-Path $BootstrapSource)) {
-    throw "Bootstrap source not found: $BootstrapSource"
+$launchArtifacts = @(
+    [pscustomobject]@{ Name = 'launcher'; Source = $LauncherSource; Destination = $LauncherScript },
+    [pscustomobject]@{ Name = 'checker'; Source = $CheckerSource; Destination = $CheckerScript },
+    [pscustomobject]@{ Name = 'bootstrap'; Source = $BootstrapSource; Destination = $BootstrapScript }
+)
+foreach ($artifact in $launchArtifacts) {
+    if (-not (Test-Path $artifact.Source)) {
+        throw "$($artifact.Name) source not found: $($artifact.Source)"
+    }
+    Copy-Item -Path $artifact.Source -Destination $artifact.Destination -Force
+    Write-Host "  wrote $($artifact.Destination)" -ForegroundColor Green
 }
-Copy-Item -Path $BootstrapSource -Destination $BootstrapScript -Force
-Write-Host "  wrote $BootstrapScript" -ForegroundColor Green
 
 # Lock ProgramData artifacts down: admin-write only, Users get read+execute
 # (read/run but not modify). Mirrors the managed-settings.json lock so the
@@ -396,9 +408,9 @@ Write-Host "  locked ProgramData artifacts: Administrators/SYSTEM full, Users re
 # --- 6b. Optional: desktop shortcut for double-click launch ------------------
 Write-Step "Optional desktop shortcut"
 
-$launcher = Join-Path $PSScriptRoot 'Start-ClaudeSandbox.ps1'
+$launcher = $LauncherScript
 if (-not (Test-Path $launcher)) {
-    Write-Warning "  Start-ClaudeSandbox.ps1 not found next to setup script - skipping shortcut."
+    Write-Warning "  installed launcher not found at $launcher - skipping shortcut."
 }
 else {
     $answer = Read-Host "Create a desktop shortcut to launch the sandbox? [Y/n]"
@@ -421,17 +433,17 @@ else {
         }
         catch {
             Write-Warning "  could not create desktop shortcut: $($_.Exception.Message)"
-            Write-Warning "  setup is otherwise complete; launch with .\Start-ClaudeSandbox.ps1"
+            Write-Warning "  setup is otherwise complete; launch with & '$LauncherScript'"
         }
     }
 }
 
-# --- 6. Done ------------------------------------------------------------------
+# --- 7. Done ------------------------------------------------------------------
 Write-Step "Setup complete"
 Write-Host @"
 To start a Claude Code session, use the launcher (or the optional desktop shortcut):
 
-  .\Start-ClaudeSandbox.ps1
+  & '$LauncherScript'
 
   NOTES:
   - Keep secrets in your own Windows profile or another location ClaudeSandbox

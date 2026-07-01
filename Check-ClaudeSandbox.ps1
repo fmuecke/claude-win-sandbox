@@ -10,6 +10,12 @@
 .PARAMETER BootstrapScript
     Dev Shell bootstrap written by Setup-ClaudeSandbox.ps1.
 
+.PARAMETER LauncherScript
+    Installed launcher written by Setup-ClaudeSandbox.ps1.
+
+.PARAMETER InstalledCheckScript
+    Installed checker written by Setup-ClaudeSandbox.ps1.
+
 .PARAMETER ManagedSettings
     Claude Code enterprise policy file.
 
@@ -17,7 +23,7 @@
     claude-win-sandbox ProgramData config file.
 
 .EXAMPLE
-    .\Check-ClaudeSandbox.ps1
+    & 'C:\ProgramData\claude-win-sandbox\Check-ClaudeSandbox.ps1'
     Runs all checks and prints a PASS/WARN/FAIL summary.
 
 .NOTES
@@ -31,11 +37,13 @@
 param(
     [string]$UserName = 'ClaudeSandbox',
     [string]$BootstrapScript = 'C:\ProgramData\claude-win-sandbox\bootstrap\Enter-ClaudeDevShell.ps1',
+    [string]$LauncherScript = 'C:\ProgramData\claude-win-sandbox\Start-ClaudeSandbox.ps1',
+    [string]$InstalledCheckScript = 'C:\ProgramData\claude-win-sandbox\Check-ClaudeSandbox.ps1',
     [string]$ManagedSettings = 'C:\ProgramData\ClaudeCode\managed-settings.json',
     [string]$ConfigFile = 'C:\ProgramData\claude-win-sandbox\config.json'
 )
 
-$SetupVersion = 2
+$SetupVersion = 3
 $FirewallMode = 'BlockWindowsLanProtocols'
 $FirewallRules = @(
     [pscustomobject]@{
@@ -436,17 +444,34 @@ else {
     Pass "Profile not readable by Users/Everyone - '$UserName' is denied by default."
 }
 
-# --- 6. Bootstrap + tooling ---------------------------------------------------
-Section "Dev Shell bootstrap & toolchain"
+# --- 6. Installed scripts + tooling ------------------------------------------
+Section "Installed scripts & toolchain"
+$programDataRoot = Split-Path $ConfigFile -Parent
+Test-ProgramDataLock -Path $programDataRoot -Description 'ProgramData sandbox directory' -UserName $UserName
+
+if (Test-Path $LauncherScript) {
+    Pass "Launcher present: $LauncherScript"
+    Test-ProgramDataLock -Path $LauncherScript -Description 'Launcher script' -UserName $UserName
+}
+else {
+    Fail "Launcher missing: $LauncherScript - run setup."
+}
+
+if (Test-Path $InstalledCheckScript) {
+    Pass "Installed checker present: $InstalledCheckScript"
+    Test-ProgramDataLock -Path $InstalledCheckScript -Description 'Installed checker script' -UserName $UserName
+}
+else {
+    Fail "Installed checker missing: $InstalledCheckScript - run setup."
+}
+
 if (Test-Path $BootstrapScript) {
     Pass "Bootstrap present: $BootstrapScript"
 
     # The bootstrap must be runnable by ClaudeSandbox but NOT writable by it -
     # otherwise the agent could rewrite what runs at next launch. Verify the
-    # ProgramData project dir, bootstrap dir, and script are admin-write only.
-    $programDataRoot = Split-Path (Split-Path $BootstrapScript -Parent) -Parent
+    # bootstrap dir and script are admin-write only.
     $bootstrapDir = Split-Path $BootstrapScript -Parent
-    Test-ProgramDataLock -Path $programDataRoot -Description 'ProgramData sandbox directory' -UserName $UserName
     Test-ProgramDataLock -Path $bootstrapDir -Description 'Bootstrap directory' -UserName $UserName
     Test-ProgramDataLock -Path $BootstrapScript -Description 'Bootstrap script' -UserName $UserName
 }

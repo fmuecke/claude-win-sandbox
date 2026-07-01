@@ -21,11 +21,12 @@ There is no build step. Validate script changes with parser checks before commit
 $errors=$null; [System.Management.Automation.Language.Parser]::ParseFile((Resolve-Path .\Setup-ClaudeSandbox.ps1), [ref]$null, [ref]$errors); $errors
 $errors=$null; [System.Management.Automation.Language.Parser]::ParseFile((Resolve-Path .\Remove-ClaudeSandbox.ps1), [ref]$null, [ref]$errors); $errors
 $errors=$null; [System.Management.Automation.Language.Parser]::ParseFile((Resolve-Path .\Start-ClaudeSandbox.ps1), [ref]$null, [ref]$errors); $errors
+$errors=$null; [System.Management.Automation.Language.Parser]::ParseFile((Resolve-Path .\Check-ClaudeSandbox.ps1), [ref]$null, [ref]$errors); $errors
 $errors=$null; [System.Management.Automation.Language.Parser]::ParseFile((Resolve-Path .\bootstrap\Enter-ClaudeDevShell.ps1), [ref]$null, [ref]$errors); $errors
 git diff --check
 ```
 
-Use `.\Check-ClaudeSandbox.ps1` to verify an installed sandbox. Run elevated for full coverage.
+Use the repo-local `.\Check-ClaudeSandbox.ps1` only when explicitly verifying an installed sandbox. Do not run it elevated or use the ProgramData-installed copy unless the user explicitly asks for installed-state verification.
 
 ## Coding Style & Naming Conventions
 

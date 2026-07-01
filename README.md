@@ -33,10 +33,10 @@ $f = 'C:\ProgramData\ClaudeCode\managed-settings.json'
 icacls $f /inheritance:r /grant 'Administrators:F' 'SYSTEM:F' 'Users:R'
 ```
 
-Start the sandbox shell:
+Start the sandbox shell via desktop shortcut or use:
 
 ```powershell
-.\Start-ClaudeSandbox.ps1
+& 'C:\ProgramData\claude-win-sandbox\Start-ClaudeSandbox.ps1'
 ```
 
 In the new window, install Claude Code as the `ClaudeSandbox` user:
@@ -48,13 +48,15 @@ irm https://claude.ai/install.ps1 | iex
 Close and reopen the sandbox shell, then verify from an elevated PowerShell:
 
 ```powershell
-.\Check-ClaudeSandbox.ps1
+& 'C:\ProgramData\claude-win-sandbox\Check-ClaudeSandbox.ps1'
 ```
 
 ## Daily Use
 
+Desktop shortcut, or
+
 ```powershell
-.\Start-ClaudeSandbox.ps1
+& 'C:\ProgramData\claude-win-sandbox\Start-ClaudeSandbox.ps1'
 ```
 
 Enter the `ClaudeSandbox` password when `runas` prompts. In the new window:
@@ -79,8 +81,8 @@ for example `C:\dev\ClaudeSandbox`.
 
 - Claude Code must be installed per-user under `C:\Users\ClaudeSandbox`, not
   machine-wide and not from your main profile.
-- Trusted bootstrap/config files live under ProgramData and are locked
-  admin-write / Users-read-execute.
+- Trusted launcher/check/bootstrap/config files live under ProgramData and are
+  locked admin-write / Users-read-execute.
 - The sandbox user can still access anything explicitly placed in the sandbox
   workspace and anything otherwise readable by normal Windows users.
 - HTTPS/web egress remains available for Claude Code, git, package managers, and

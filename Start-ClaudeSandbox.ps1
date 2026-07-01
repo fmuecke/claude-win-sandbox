@@ -14,7 +14,7 @@
     typing - the "hung shell".) runas prompts for the password natively.
 
 .EXAMPLE
-    .\Start-ClaudeSandbox.ps1
+    & 'C:\ProgramData\claude-win-sandbox\Start-ClaudeSandbox.ps1'
     Prompts for the password, launches a sandboxed Dev Shell in the workspace
     stored in the ProgramData config by setup.
 #>
@@ -69,7 +69,7 @@ runas /user:$UserName $inner
 
 if ($LASTEXITCODE -ne 0) {
     Write-Warning "runas returned exit code $LASTEXITCODE (wrong password, or the account lacks interactive logon)."
-    Write-Host "Verify setup with: .\Check-ClaudeSandbox.ps1" -ForegroundColor Yellow
+    Write-Host "Verify setup with: & 'C:\ProgramData\claude-win-sandbox\Check-ClaudeSandbox.ps1'" -ForegroundColor Yellow
 }
 else {
     Write-Host "Launched. In the new window, run: claude" -ForegroundColor Cyan

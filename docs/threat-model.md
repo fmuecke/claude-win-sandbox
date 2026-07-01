@@ -95,6 +95,8 @@ Trusted launch/configuration artifacts live under ProgramData and should be
 admin-write / Users-read-execute:
 
 - `C:\ProgramData\claude-win-sandbox\config.json`
+- `C:\ProgramData\claude-win-sandbox\Start-ClaudeSandbox.ps1`
+- `C:\ProgramData\claude-win-sandbox\Check-ClaudeSandbox.ps1`
 - `C:\ProgramData\claude-win-sandbox\bootstrap\Enter-ClaudeDevShell.ps1`
 - `C:\ProgramData\ClaudeCode\managed-settings.json`
 
@@ -166,15 +168,15 @@ Limitations:
 
 ### Protected ProgramData control plane
 
-Setup copies the bootstrap and writes configuration under
-`C:\ProgramData\claude-win-sandbox`, then locks the directory admin-write /
-Users-read-execute. The managed Claude Code policy is also intended to live
-under `C:\ProgramData\ClaudeCode` with admin-write permissions.
+Setup copies the launcher, checker, and bootstrap, and writes configuration
+under `C:\ProgramData\claude-win-sandbox`, then locks the directory admin-write /
+Users-read-execute. The managed Claude Code policy is also intended to live under
+`C:\ProgramData\ClaudeCode` with admin-write permissions.
 
 Security effect:
 
-- Prevents `ClaudeSandbox` from rewriting the launcher bootstrap or changing the
-  configured sandbox path.
+- Prevents `ClaudeSandbox` from rewriting the launcher/checker/bootstrap or
+  changing the configured sandbox path.
 - Keeps trusted launch scripts out of the agent-writable workspace.
 
 Limitations:
@@ -432,7 +434,7 @@ those cases.
 Run after setup and after material local policy changes:
 
 ```powershell
-.\Check-ClaudeSandbox.ps1
+& 'C:\ProgramData\claude-win-sandbox\Check-ClaudeSandbox.ps1'
 ```
 
 For full coverage, run it elevated. Review every WARN and FAIL, especially:
@@ -440,7 +442,8 @@ For full coverage, run it elevated. Review every WARN and FAIL, especially:
 - `ClaudeSandbox` is not an administrator and has no risky group memberships.
 - Network and RDP logon deny rights are present.
 - Interactive logon is still allowed.
-- ProgramData config, bootstrap, and policy files are admin-write-only.
+- ProgramData config, launcher/checker, bootstrap, and policy files are
+  admin-write-only.
 - The sandbox workspace exists and grants `ClaudeSandbox` write access.
 - The developer profile is not readable by Users, Everyone, or Authenticated
   Users.

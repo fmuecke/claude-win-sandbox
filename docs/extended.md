@@ -34,8 +34,9 @@ shops. This project is for that case.
    - Writes `C:\ProgramData\claude-win-sandbox\config.json` with the sandbox
      path and setup metadata, locates VS Developer Shell + git, copies the Dev
      Shell bootstrap into
-     `C:\ProgramData\claude-win-sandbox\bootstrap\`, and locks those ProgramData
-     artifacts admin-write / Users-RX
+     `C:\ProgramData\claude-win-sandbox\bootstrap\`, installs the launcher and
+     checker into `C:\ProgramData\claude-win-sandbox\`, and locks those
+     ProgramData artifacts admin-write / Users-RX
    - Can create a Public Desktop shortcut that launches the sandbox
 
 2. **`managed-settings.json`** (copy once, elevated)
@@ -116,7 +117,7 @@ from **outside** the sandbox — exactly what the boundary is meant to prevent.
 After running setup, start a sandboxed shell and install as `ClaudeSandbox`:
 
 ```powershell
-.\Start-ClaudeSandbox.ps1
+& 'C:\ProgramData\claude-win-sandbox\Start-ClaudeSandbox.ps1'
 
 # in the new window (running as ClaudeSandbox):
 irm https://claude.ai/install.ps1 | iex
@@ -145,11 +146,11 @@ $f = 'C:\ProgramData\ClaudeCode\managed-settings.json'
 icacls $f /inheritance:r /grant 'Administrators:F' 'SYSTEM:F' 'Users:R'   # admin-write only
 
 # 3. Install Claude Code AS ClaudeSandbox (see "Installing Claude Code" above)
-.\Start-ClaudeSandbox.ps1
+& 'C:\ProgramData\claude-win-sandbox\Start-ClaudeSandbox.ps1'
 #   in the new window:  irm https://claude.ai/install.ps1 | iex
 
 # 4. Verify everything took  (ELEVATED for full coverage)
-.\Check-ClaudeSandbox.ps1
+& 'C:\ProgramData\claude-win-sandbox\Check-ClaudeSandbox.ps1'
 
 # 5. First-time: log in as ClaudeSandbox once to set up its git/ADO credential
 #    (scoped, minimal PAT — kept separate from yours)
@@ -158,7 +159,7 @@ icacls $f /inheritance:r /grant 'Administrators:F' 'SYSTEM:F' 'Users:R'   # admi
 Then, day to day (normal PowerShell, no elevation):
 
 ```powershell
-.\Start-ClaudeSandbox.ps1                           # uses C:\dev\ClaudeSandbox
+& 'C:\ProgramData\claude-win-sandbox\Start-ClaudeSandbox.ps1'
 # or use the optional desktop shortcut created by setup
 # enter ClaudeSandbox password (runas) -> new window opens -> type: claude
 ```

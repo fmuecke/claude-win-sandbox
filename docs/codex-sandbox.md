@@ -271,8 +271,8 @@ Codex separates trusted control-plane files from writable workspaces:
 
 Claude implication:
 
-- Keep `C:\ProgramData\claude-win-sandbox\config.json` and bootstrap scripts
-  admin-write / Users-RX.
+- Keep `C:\ProgramData\claude-win-sandbox\config.json`, launcher/checker, and
+  bootstrap scripts admin-write / Users-RX.
 - Keep `C:\ProgramData\ClaudeCode\managed-settings.json` admin-write.
 - Do not put trusted launch scripts under the writable workspace.
 - If we add a helper binary, install/copy it to an admin-controlled location,
@@ -280,11 +280,12 @@ Claude implication:
 
 ## What We Can Adapt Soon
 
-1. Add a setup marker/version file in ProgramData.
-2. Expand checker coverage for ProgramData locks and setup marker compatibility.
-3. Add optional outbound firewall blocking scoped to `ClaudeSandbox`.
+1. Keep setup metadata in the ProgramData config.
+2. Keep checker coverage for ProgramData locks and setup metadata compatibility.
+3. Keep optional outbound firewall blocking scoped to `ClaudeSandbox`.
 4. Document clearly that deny-network-logon is not outbound network isolation.
-5. Keep trusted bootstrap/config/policy files out of the writable workspace.
+5. Keep trusted launcher/check/bootstrap/config/policy files out of the writable
+   workspace.
 6. Add checks or optional protection for workspace control paths such as `.git`,
    `.claude`, `.codex`, and `.agents`.
 

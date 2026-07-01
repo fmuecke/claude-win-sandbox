@@ -4,7 +4,7 @@ Running log to update the project step by step. Captures decisions already made
 (with rationale) and open items still to action. Personal/career discussions are
 deliberately excluded.
 
-_Last updated: 2026-06-28_
+_Last updated: 2026-07-01_
 
 ---
 
@@ -38,12 +38,14 @@ _Last updated: 2026-06-28_
   leaving HTTP/HTTPS and internal web services usable. Strict destination
   allowlisting is deferred because it needs a managed proxy or network policy.
 
-### Filesystem layout (DECIDED — partially implemented, see Todo)
-- **Config/bootstrap/managed-settings → ProgramData**
+### Filesystem layout
+- **Config/launcher/checker/bootstrap/managed-settings → ProgramData**
   (`C:\ProgramData\claude-win-sandbox\config.json` for the sandbox path,
-  `C:\ProgramData\claude-win-sandbox\bootstrap\` for the bootstrap,
+  `C:\ProgramData\claude-win-sandbox\Start-ClaudeSandbox.ps1` for launch,
+  `C:\ProgramData\claude-win-sandbox\Check-ClaudeSandbox.ps1` for verification,
+  `C:\ProgramData\claude-win-sandbox\bootstrap\` for the bootstrap, and
   `C:\ProgramData\ClaudeCode\` for policy), admin-write and Users-RX/read only
-  — not writable by sandbox user, prevents launch/config/policy poisoning.
+  — not writable by sandbox user, prevents launch/check/config/policy poisoning.
 - **Workspace default → `C:\dev\ClaudeSandbox\`** with setup asking only for the
   base directory. Chosen over `C:\Users\Public\` as the most developer-intuitive
   tradeoff; awareness carried by naming + in-shell prompt marker, not ownership
@@ -55,6 +57,11 @@ _Last updated: 2026-06-28_
 - **Setup regenerates ProgramData artifacts** from the repo source and writes the
   resolved sandbox path to ProgramData config; the project repo remains the
   source of truth for scripts.
+- **Setup deploys the daily launcher and checker into ProgramData** alongside
+  the bootstrap. These entrypoints are admin-write / Users-RX so desktop
+  shortcuts, Windows Terminal profiles, and elevated verification can target a
+  stable trusted path instead of a mutable repo checkout. `Setup` and `Remove`
+  remain repo/package maintenance scripts for now.
 - **Single ProgramData state file.** `config.json` carries the runtime
   `sandboxPath` plus nested setup metadata (`setupVersion`, timestamp, sandbox
   user, installing user, and firewall intent). A separate `setup-marker.json` is
@@ -111,7 +118,7 @@ _Last updated: 2026-06-28_
 - [x] Add optional desktop shortcut for the fixed bootstrap workspace.
 - [x] Update `Check-ClaudeSandbox.ps1` paths + ProgramData lock verification.
 - [x] Update README default paths and setup flow.
-- [ ] Decide whether `Setup` should deploy launcher/check scripts themselves to
+- [x] Decide whether `Setup` should deploy launcher/check scripts themselves to
       `C:\ProgramData\claude-win-sandbox\`, or keep launching from the repo plus
       locked ProgramData bootstrap.
 - [ ] Update the Windows Terminal profile snippet once the final launcher location
